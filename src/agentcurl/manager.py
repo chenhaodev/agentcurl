@@ -60,3 +60,17 @@ class CrawlManager:
         """
         document = self.fetch(source, **opts) if isinstance(source, str) else source
         return self.extractor.extract(document, target)
+
+    # -- lifecycle ------------------------------------------------------------
+    def close(self) -> None:
+        """Release backend resources (pooled connections, event loops). Safe to
+        call multiple times; also runs on context-manager exit."""
+        closer = getattr(self.backend, "close", None)
+        if callable(closer):
+            closer()
+
+    def __enter__(self) -> "CrawlManager":
+        return self
+
+    def __exit__(self, *exc) -> None:
+        self.close()

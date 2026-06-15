@@ -9,9 +9,11 @@ of the CrawlBackend contract — every other adapter mirrors its shape.
 
 from __future__ import annotations
 
+import httpx
+
 from .base import CrawlMixin
 from ..config import Config
-from ..fetch_utils import extract_links, http_get
+from ..fetch_utils import build_client, extract_links, http_get
 from ..types import Document
 
 
@@ -20,9 +22,28 @@ class StaticBackend(CrawlMixin):
 
     def __init__(self, config: Config):
         self.config = config
+        self._client: httpx.Client | None = None  # lazy pooled connection
+
+    @property
+    def client(self) -> httpx.Client:
+        if self._client is None:
+            self._client = build_client(self.config)
+        return self._client
+
+    def close(self) -> None:
+        """Release the pooled connection. Safe to call more than once."""
+        if self._client is not None:
+            self._client.close()
+            self._client = None
+
+    def __del__(self):  # best-effort; don't raise during GC
+        try:
+            self.close()
+        except Exception:
+            pass
 
     def fetch(self, url: str, **opts) -> Document:
-        resp = http_get(url, self.config)
+        resp = http_get(url, self.config, client=self.client)
         html = resp.text
         markdown, title, meta = self._extract(html, url)
         return Document(

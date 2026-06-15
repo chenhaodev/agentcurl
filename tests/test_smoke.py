@@ -103,6 +103,22 @@ def test_static_crawl_walks_same_domain():
     print(f"ok  static.crawl: walked {len(docs)} same-domain pages")
 
 
+def test_static_pooled_client_reused_and_closed():
+    """The static backend reuses one pooled httpx.Client across fetches and the
+    manager's close()/context-manager releases it."""
+    with _FixtureServer() as base:
+        with CrawlManager(_cfg()) as cm:
+            backend = cm.backend
+            cm.fetch(f"{base}/article.html")
+            client_after_first = backend._client
+            cm.fetch(f"{base}/page2.html")
+            assert backend._client is client_after_first, "client not reused across fetches"
+            assert client_after_first is not None and not client_after_first.is_closed
+        # context-manager exit closed it
+        assert backend._client is None, "manager exit did not close the pooled client"
+    print("ok  static backend reuses one pooled client and closes on exit")
+
+
 def test_crawl_respects_max_pages():
     with _FixtureServer() as base:
         cm = CrawlManager(_cfg())

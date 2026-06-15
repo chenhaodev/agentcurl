@@ -37,6 +37,13 @@ class RouterBackend:
         self.name = "router(" + "+".join(backends) + ")"
         self.errors: list[tuple[str, Exception]] = []
 
+    def close(self) -> None:
+        """Close any child backend that holds resources (e.g. a pooled client)."""
+        for backend in self.backends.values():
+            closer = getattr(backend, "close", None)
+            if callable(closer):
+                closer()
+
     def fetch(self, url: str, **opts) -> Document:
         return self._dispatch("fetch", url, **opts)
 

@@ -31,35 +31,34 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--json", action="store_true", help="emit JSON instead of pretty text")
     args = parser.parse_args(argv)
 
-    cm = CrawlManager()
+    with CrawlManager() as cm:
+        if args.extract or args.schema:
+            target = parse_target(args.schema) if args.schema else args.extract
+            res = cm.extract(args.url, target)
+            if args.json:
+                print(json.dumps(res.to_dict(), indent=2, ensure_ascii=False))
+            else:
+                print(f"# extract {res.url}  ({'raw markdown' if res.raw else 'json'})")
+                print(res.data if res.raw else json.dumps(res.data, indent=2, ensure_ascii=False))
+            return 0
 
-    if args.extract or args.schema:
-        target = parse_target(args.schema) if args.schema else args.extract
-        res = cm.extract(args.url, target)
+        if args.crawl:
+            docs = cm.crawl(args.url, depth=args.depth, max_pages=args.max_pages)
+            if args.json:
+                print(json.dumps([d.to_dict() for d in docs], indent=2, ensure_ascii=False))
+            else:
+                print(f"# crawled {len(docs)} page(s) via {cm.backend.name}")
+                for d in docs:
+                    print(f"  - {d.url}  ({d.status}, {len(d.markdown)} md chars, {len(d.links)} links)")
+            return 0
+
+        doc = cm.fetch(args.url)
         if args.json:
-            print(json.dumps(res.to_dict(), indent=2, ensure_ascii=False))
+            print(json.dumps(doc.to_dict(), indent=2, ensure_ascii=False))
         else:
-            print(f"# extract {res.url}  ({'raw markdown' if res.raw else 'json'})")
-            print(res.data if res.raw else json.dumps(res.data, indent=2, ensure_ascii=False))
+            print(f"# {doc.title or doc.url}  (backend={cm.backend.name}, status={doc.status})")
+            print(doc.markdown)
         return 0
-
-    if args.crawl:
-        docs = cm.crawl(args.url, depth=args.depth, max_pages=args.max_pages)
-        if args.json:
-            print(json.dumps([d.to_dict() for d in docs], indent=2, ensure_ascii=False))
-        else:
-            print(f"# crawled {len(docs)} page(s) via {cm.backend.name}")
-            for d in docs:
-                print(f"  - {d.url}  ({d.status}, {len(d.markdown)} md chars, {len(d.links)} links)")
-        return 0
-
-    doc = cm.fetch(args.url)
-    if args.json:
-        print(json.dumps(doc.to_dict(), indent=2, ensure_ascii=False))
-    else:
-        print(f"# {doc.title or doc.url}  (backend={cm.backend.name}, status={doc.status})")
-        print(doc.markdown)
-    return 0
 
 
 if __name__ == "__main__":

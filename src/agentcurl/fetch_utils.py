@@ -18,15 +18,36 @@ from .config import Config
 
 
 def http_get(
-    url: str, config: Config, *, extra_headers: dict[str, str] | None = None
+    url: str,
+    config: Config,
+    *,
+    extra_headers: dict[str, str] | None = None,
+    client: httpx.Client | None = None,
 ) -> httpx.Response:
     """One GET with the configured UA, timeout and redirect following. The single
     source of truth for outbound HTTP — backends pass `extra_headers` for any
-    request-specific headers (e.g. jina's Accept / Authorization)."""
+    request-specific headers (e.g. jina's Accept / Authorization).
+
+    Pass a persistent `client` to reuse its connection pool across a multi-page
+    crawl (keep-alive saves a TCP+TLS handshake per same-host page); omit it for
+    a one-off request.
+    """
     headers = {"User-Agent": config.user_agent, **(extra_headers or {})}
+    if client is not None:
+        return client.get(url, headers=headers)
     return httpx.get(
         url,
         headers=headers,
+        timeout=config.request_timeout,
+        follow_redirects=True,
+    )
+
+
+def build_client(config: Config) -> httpx.Client:
+    """A pooled httpx.Client carrying the configured UA/timeout/redirect policy,
+    so per-request calls only add request-specific headers."""
+    return httpx.Client(
+        headers={"User-Agent": config.user_agent},
         timeout=config.request_timeout,
         follow_redirects=True,
     )
