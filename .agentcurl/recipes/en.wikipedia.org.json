@@ -1,0 +1,14 @@
+{
+  "domain": "en.wikipedia.org",
+  "best_backend": "static",
+  "cookies": {},
+  "storage_state": null,
+  "headers": {},
+  "attempts": {
+    "static": 1
+  },
+  "successes": {
+    "static": 1
+  },
+  "notes": ""
+}

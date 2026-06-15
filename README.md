@@ -1,49 +1,60 @@
-# agentcurl — a switchable web-crawler middleware
+# agentcurl · 可切换后端的网页爬取中间件
 
 [![CI](https://github.com/chenhaodev/agentcurl/actions/workflows/ci.yml/badge.svg)](https://github.com/chenhaodev/agentcurl/actions/workflows/ci.yml)
 
-One interface over five pluggable crawl backends, switched by a single env var,
-with **structured LLM extraction** (DeepSeek-V4-Flash) layered on top. Drive it
-from **repo code**, an **MCP server**, or a **Claude Code SKILL** — all three are
-thin wrappers over the same `CrawlManager`.
+> 一套接口（`fetch` / `crawl` / `extract`）封装五种爬虫引擎，**一个环境变量切换**，
+> 上层叠加 **DeepSeek 结构化抽取**（网页 → JSON）。可从**代码库 / MCP 服务 / Claude Code SKILL**
+> 三种入口驱动 —— 三者都是同一个 `CrawlManager` 的薄封装。
 
-`5 backends` · `zero-dep default` · `1 env var to switch` · `URL → JSON` · `3 surfaces` · `CPU-only`
+`5 种后端` · `零依赖默认引擎` · `1 个变量切换` · `网页 → JSON` · `3 种入口` · `纯 CPU` · `实测可爬全球 Top10 的 9 个`
 
-Sibling of [agentmem](https://github.com/chenhaodev/agentmem), built on the same
-shape: *one common interface, many pluggable backends, env-switched.*
+[agentmem](https://github.com/chenhaodev/agentmem) 的姊妹项目，沿用同一形态：*一套通用接口、多个可插拔后端、环境变量切换*。
 
-```python
-from agentcurl import CrawlManager
+---
 
-with CrawlManager() as cm:                           # backend chosen by CRAWL_BACKEND
-    doc = cm.fetch("https://example.com")            # -> Document (markdown + links + meta)
-    docs = cm.crawl("https://example.com", depth=1)  # -> list[Document]
-    data = cm.extract(doc, {"title": "str", "price": "number"})  # -> ExtractResult (JSON)
+## 一分钟看懂（无需爬虫背景）
+
+**遇到的问题**：爬一个网站从来不是「一种活」。有的页面是纯 HTML（解析飞快）；有的靠 JavaScript
+渲染内容（得开真浏览器）；有的会反爬封你（得用托管代理服务）；而且拿到页面后你通常想要的是
+**结构化数据**，不是一大坨文字。大家最后都在反复拼装 trafilatura + Playwright + 某个 API + 一次
+大模型调用，每个站点都重写一遍胶水代码。
+
+**这个项目怎么做**：把这些引擎统统藏到**一套接口**后面 —— `fetch`（取一页）/ `crawl`（爬整站）/
+`extract`（抽 JSON）—— 用一个环境变量选引擎：
+
+```
+CRAWL_BACKEND=static → browser → crawl4ai → firecrawl → jina
 ```
 
-## In one minute (no scraping background needed)
+默认引擎零额外安装；重型引擎按需开启。`extract` 再用 DeepSeek 把任意页面变成 JSON ——
+**没配密钥时自动降级返回原始 markdown，离线也绝不崩**。
 
-**The problem.** Scraping a site is never one job. Some pages are plain HTML
-(fast to parse); some render content with JavaScript (need a real browser); some
-block you (need a managed proxy service); and once you have the page you usually
-want *structured data*, not a wall of text. People end up gluing together
-trafilatura + Playwright + an API client + an LLM call, with bespoke code each
-time.
+> **一句话**：别再为每个站点重写「取页 → 渲染 → 抽取」的胶水代码了 ——
+> 把一个 `CrawlManager` 指向 URL，用环境变量切引擎即可。
 
-**What this does.** It puts all of those behind **one interface** —
-`fetch` / `crawl` / `extract` — and lets you pick the engine with a single env
-var (`CRAWL_BACKEND=static` → `browser` → `crawl4ai` → `firecrawl` → `jina`, or a
-`+`-list that falls back across them). The default needs zero extra installs;
-heavier engines are opt-in. `extract` then turns any page into JSON via DeepSeek
-— and falls back to raw markdown when there's no API key, so nothing ever
-crashes offline.
+---
 
-> **In a sentence:** stop rewriting the fetch-render-extract glue per site —
-> point one `CrawlManager` at a URL and switch engines with an env var.
+## 核心概念（先读这 4 个词）
 
-## See it work
+后面反复用到，先用大白话讲清楚（完整版见文末[名词速查](#附录名词速查)）：
 
-Pull structured JSON straight from a page on the command line:
+- **后端 / backend**：实际干活的爬虫引擎。本项目有 5 个，能力不同（纯 HTML、真浏览器、托管 API……），
+  但**对外长一个样**，靠一个环境变量切换。
+- **结构化抽取 / extract**：把网页正文交给大模型，按你给的「字段表」或「一句话要求」吐回 **JSON**
+  （比如 `{标题, 价格, 作者}`），而不是让你自己写正则去抠。
+- **路由 / 回退链 / router**：把 `CRAWL_BACKEND` 写成 `static+jina` 这样的「加号串」，就会先试便宜的
+  `static`，**取不到内容再自动落到** `jina`。一行配置搞定「先省钱、不行再上重的」。
+- **meta 学习 / 配方**：仓库会**记住每个域名**怎么爬最顺（哪个后端有效、登录会话），**下次自动复用**——
+  看你登录一遍，以后这个站点就自动带着登录态爬。详见[下面](#meta-学习看一遍下次就会)。
+
+---
+
+## 看它怎么爬
+
+> 想一次看完下面所有案例？跑 `./demo.sh`（README 这一节的可复现版）。
+> 想录成 GIF/视频分享：`asciinema rec demo.cast -c ./demo.sh` 或用 `vhs`。
+
+### 案例 ① 一行命令，网页直接变 JSON
 
 ```bash
 $ python -m agentcurl https://en.wikipedia.org/wiki/Web_scraping \
@@ -61,304 +72,275 @@ $ python -m agentcurl https://en.wikipedia.org/wiki/Web_scraping \
 }
 ```
 
-Same call with a natural-language target instead of a schema:
+### 案例 ② 爬 YouTube 视频页 → 抽出结构化信息（真实输出）
+
+YouTube 是纯 JS 渲染，`static` 只能拿到 146 字的空壳；换 `jina` 远程阅读器拿到 55KB 正文，
+DeepSeek 再抽成 JSON：
 
 ```bash
-$ python -m agentcurl https://example.com --extract "the title and a one-line summary"
+$ CRAWL_BACKEND=jina python -m agentcurl "https://www.youtube.com/watch?v=dQw4w9WgXcQ" \
+    --schema '{"video_title":"str","channel":"str","duration":"str","views":"str"}' --json
+```
+```json
+{
+  "data": {
+    "video_title": "Rick Astley - Never Gonna Give You Up (Official Video) (4K Remaster)",
+    "channel": "Rick Astley",
+    "duration": "3:33",
+    "views": "1,783,100,870"
+  },
+  "raw": false
+}
 ```
 
-Or switch to a fallback chain — try cheap `static` first, fall through to the
-remote `jina` reader only if it comes back empty:
+### 案例 ③ 中文站点 + 回退链
+
+`static` 先试，空了自动落到 `jina`；中文 GBK 站点（如寻医问药网）也能正确解码、不再乱码：
 
 ```bash
-$ CRAWL_BACKEND=static+jina ROUTER_MODE=fallback python -m agentcurl https://example.com
-# backend=router(static+jina); the result is tagged metadata["router_backend"]="static"
+$ CRAWL_BACKEND=static+jina ROUTER_MODE=fallback python -m agentcurl https://www.xywy.com/
+# 标题: 寻医问药网_值得信赖的互联网医疗健康服务平台
+# 命中后端会标记在 metadata["router_backend"]
 ```
 
-## Why this shape
+---
 
-- **One contract, not one feature set.** Every backend satisfies the same
-  `CrawlBackend` Protocol — `fetch(url) -> Document` and `crawl(url) -> [Document]`
-  over a lowest-common-denominator `Document`
-  (`url, status, markdown, html, title, links, metadata`). Backend superpowers
-  (Firecrawl screenshots, crawl4ai fit-markdown scores) ride in `metadata` rather
-  than widening the contract, so swapping engines is a config change, not a code
-  change.
-- **Zero-dep default, heavy stuff opt-in.** `static` (httpx + trafilatura) needs
-  nothing extra and handles most static HTML in milliseconds. You only install
-  Playwright / crawl4ai — or wire up a Firecrawl key — when a site actually
-  demands it.
-- **Crawl for free.** A `CrawlMixin` gives every backend a same-domain
-  breadth-first `crawl()` built on its own `fetch()`, so a backend that only
-  knows how to fetch one page still crawls. Engines with native deep-crawl
-  (crawl4ai, firecrawl) override it.
-- **Extraction is core, and degrades gracefully.** `extract` is a first-class
-  layer, not an afterthought — and with no key (or any LLM error) it returns raw
-  markdown instead of failing.
+## 它到底能不能爬 Top 网站
 
-```
-CrawlManager (facade)                                     manager.py
- ├─ CrawlBackend   pluggable, switched by CRAWL_BACKEND    backends/
- │    ├─ static     httpx + trafilatura → markdown   (zero-dep DEFAULT)
- │    ├─ browser    Playwright headless Chromium (JS / dynamic)
- │    ├─ crawl4ai   crawl4ai: fit-markdown + native deep crawl
- │    ├─ firecrawl  Firecrawl managed REST API (scrape / crawl)
- │    ├─ jina       r.jina.ai reader (zero-install remote URL → md)
- │    └─ router     fallback chain / fan-out across the above (a+b)
- ├─ Extractor     DeepSeek-V4-Flash: page → schema/NL prompt → JSON   extract.py
- ├─ RecipeStore   meta layer: learns best backend + login session per domain   recipes.py
- └─ DeepSeekLLM   one OpenAI-compatible client, injected into the Extractor   llm.py
-```
+不空口说。下表是**真实跑出来的**结果（2026-06，本机网络）：用 `static` 和 `jina` 各抓一次
+全球访问量 Top10 站点的首页，记录 HTTP 状态码与拿到的 markdown 字符数。
 
-## Backends
+| 站点 | `static`（状态/字符） | `jina`（状态/字符） | 推荐后端 |
+|------|---------------------:|-------------------:|:--------|
+| wikipedia.org | 200 / 11,891 | 200 / 61,343 | **static** ✅ |
+| facebook.com | 200 / 387 | 200 / 7,415 | static / jina ✅ |
+| google.com | 200 / 62 | 200 / 6,217 | **jina** ✅ |
+| youtube.com¹ | 200 / 146 | 200 / 669 | **jina** ✅ |
+| amazon.com | 200 / 142 | 200 / 182,216 | **jina** ✅ |
+| baidu.com | 200 / 81 | 200 / 12,832 | **jina** ✅ |
+| bing.com | 200 / 4 | 200 / 26,978 | **jina** ✅ |
+| instagram.com | 200 / 0 | 200 / 2,282 | **jina** ✅ |
+| reddit.com | **403（封）** | 200 / 82,259 | **jina** ✅ |
+| x.com | 200 / 295（空壳） | 451（法律拦截） | 需登录 → meta ⚠️ |
 
-| `CRAWL_BACKEND` | What it is | Install | Best for | Live? |
-|---|---|---|---|:---:|
-| `static` *(default)* | httpx + trafilatura → markdown | none (core) | static HTML, ms/page, CPU-only | ✅ |
-| `browser` | Playwright headless Chromium | `pip install "agentcurl[browser]"` + `playwright install chromium` | JS / dynamic pages | ✅ |
-| `crawl4ai` | crawl4ai: fit-markdown + native deep crawl | `pip install "agentcurl[crawl4ai]"` + `crawl4ai-setup` | LLM-native crawling at depth | ✅ |
-| `firecrawl` | Firecrawl managed REST API | set `FIRECRAWL_API_KEY` | anti-bot / proxy escape hatch | offline-tested |
-| `jina` | r.jina.ai remote reader | none (key optional) | zero-install URL → markdown | ✅ |
+**结论：Top10 里 9 个能直接爬下来**（`static` 或 `jina`）。`reddit` 对 `static` 直接 403 反爬，
+但 `jina` 拿到 82KB —— 这正是「**回退链**」的价值：`static+jina` 一行配置自动兜住。唯一的硬骨头
+`x.com` 需要登录态，而这正是下面 [meta 学习](#meta-学习看一遍下次就会) 的登录捕获功能要解决的。
 
-"Live?" = exercised end-to-end against real sites (see [Verify](#verify)).
-`firecrawl` is code-complete and unit-tested but needs a paid key to run live.
+> ¹ YouTube **首页**对所有人都稀疏（登录墙/启动页）；**视频页**内容很丰富 —— 见上面案例 ②，
+> `jina` 拿到 55KB 并成功抽出标题/频道/时长/播放量。
+>
+> 复现：`RUN_LIVE=1 python tests/test_live.py`，或 `python benchmark.py --extract static jina`。
 
-**Router.** Set `CRAWL_BACKEND` to a `+`-list (e.g. `static+browser+firecrawl`)
-to wrap the children in a `RouterBackend` — itself a `CrawlBackend`, so nothing
-else changes:
+---
 
-- `ROUTER_MODE=fallback` *(default)* — try children in order, return the **first
-  non-empty** result. Start cheap (`static`), fall through to heavier/remote
-  engines only when a page comes back empty.
-- `ROUTER_MODE=fan-out` — query **all** children, return the richest
-  (longest-markdown) result.
+## 为什么选这些工具（不是拍脑袋）
 
-A child that errors or returns empty is skipped (the error is recorded on
-`router.errors`); if every child raises, the last error propagates. The winning
-result is tagged with `metadata["router_backend"]`.
+每个后端都选用了**各自领域里最受认可的开源/托管方案**。下表 star 数为 `gh api` 实时拉取（2026-06）：
 
-## Structured extraction
+| 后端 | 底层项目 | GitHub | Star ⭐ | 为什么是它 |
+|------|---------|--------|-------:|-----------|
+| `static` | [adbar/trafilatura](https://github.com/adbar/trafilatura) | Python | **6.1k** | 学术界公认最准的正文抽取器之一（多次 ScrapingHub/CommonCrawl 评测领先），纯 CPU、毫秒级 |
+| `browser` | [microsoft/playwright](https://github.com/microsoft/playwright) | TS | **91k** | 微软出品、事实标准的浏览器自动化，渲染 JS 页面 |
+| `crawl4ai` | [unclecode/crawl4ai](https://github.com/unclecode/crawl4ai) | Python | **68.5k** | GitHub trending 常客、最火的「LLM 友好」开源爬虫，fit-markdown + 原生深度爬 |
+| `firecrawl` | [firecrawl/firecrawl](https://github.com/firecrawl/firecrawl) | TS | **133k** | 当前最热的托管爬取服务，自带反爬/代理/渲染，是「被封了」时的逃生舱 |
+| `jina` | [jina-ai/reader](https://github.com/jina-ai/reader) | TS | **11.2k** | 零安装远程阅读器（`r.jina.ai`），远端处理 JS，无需本地装任何东西 |
 
-`extract(url | Document, target)` fetches via the active backend, then asks
-DeepSeek to return JSON. `target` is either:
+合计 **30 万+ star**，且全部在最近一个月内有提交（活跃维护）。换句话说：agentcurl 不发明新轮子，
+而是把这五个**被社区投票选出来的**引擎统一到一套接口下，让你按场景一键切换。
 
-- a **dict schema** — `{"title": "str", "price": "number"}` (keys → expected types), or
-- a **list of fields** — `["title", "author", "published_date"]`, or
-- a **natural-language prompt** — `"the article title and author"`.
+---
 
-With no `DEEPSEEK_API_KEY` (or any LLM/parse error) it returns the raw markdown
-with `ExtractResult.raw == True`, so the pipeline never crashes offline.
+## 架构
 
-## Meta-learning: learn a site once, get it right next time
-
-agentcurl shouldn't make you re-solve a site every visit. The **meta layer**
-(on by default; `AGENTCURL_LEARN=0` to disable) keeps a small per-domain
-*recipe* it learns and replays automatically:
-
-- **Learn from outcomes (zero effort).** Every fetch records which backend
-  actually returned content for that domain. With `CRAWL_BACKEND=auto`, the next
-  crawl of that domain is routed to the backend that has worked best there —
-  `static` until something better is learned, then e.g. `jina` for a JS site.
-- **Learn a login (watch once).** For pages behind a login, capture the session
-  one time in a real browser:
-
-  ```bash
-  python -m agentcurl https://example.com/dashboard --learn-login
-  # a browser opens — log in, then press Enter; the session is saved
-  ```
-
-  This stores the Playwright `storage_state` (cookies + localStorage) and a
-  cookie set in the domain's recipe. **Every later crawl of that domain replays
-  it** — the `browser` backend reloads the session, and `static`/`jina` send the
-  saved cookies — so authenticated pages just work, no code change.
-
-Recipes are plain JSON under `AGENTCURL_RECIPES_DIR` (default `.agentcurl/`,
-git-ignored). A `Recipe` carries `best_backend`, `cookies`, `storage_state`,
-extra `headers`, and per-backend success tallies. Programmatic API:
-
-```python
-with CrawlManager() as cm:        # CRAWL_BACKEND=auto
-    cm.learn_login("https://site.com/login")   # one-time, interactive
-    doc = cm.fetch("https://site.com/private")  # authenticated, best backend, automatic
+```mermaid
+flowchart TB
+    U["你的代码 / MCP / SKILL"] --> M["CrawlManager（门面）"]
+    M --> R{"CRAWL_BACKEND"}
+    R -->|static| S["httpx + trafilatura<br/>纯 HTML · 零依赖默认"]
+    R -->|browser| B["Playwright 无头 Chromium<br/>JS / 动态页"]
+    R -->|crawl4ai| C["crawl4ai<br/>fit-markdown + 深度爬"]
+    R -->|firecrawl| F["Firecrawl 托管 API<br/>反爬逃生舱"]
+    R -->|jina| J["r.jina.ai 远程阅读器<br/>零安装"]
+    R -->|a+b| RT["RouterBackend<br/>回退链 / 扇出"]
+    M --> X["Extractor · DeepSeek<br/>网页 → JSON"]
+    M --> RC["RecipeStore（meta 学习）<br/>记住每域名最佳后端 + 登录会话"]
 ```
 
-## Install
+> 不支持 mermaid 的查看器可读作：
+> `CrawlManager` 按 `CRAWL_BACKEND` 选一个后端（或把 `a+b` 包成回退链 router），
+> 取回统一的 `Document`；`Extractor` 用 DeepSeek 把它变 JSON；`RecipeStore` 记住每个域名怎么爬最顺。
+
+**契约**：所有后端都实现同一个 `CrawlBackend` 协议 —— `fetch(url) -> Document` 与
+`crawl(url) -> [Document]`，`Document` 是最小公共结构
+（`url, status, markdown, html, title, links, metadata`）。后端的「超能力」（Firecrawl 截图、
+crawl4ai 的 fit-markdown 评分）放进 `metadata`，不污染契约 —— 所以换引擎是改配置，不是改代码。
+
+---
+
+## 快速开始
 
 ```bash
-pip install -e .                       # core: httpx, trafilatura, openai, dotenv
-# pip install -e ".[browser]"          # + Playwright   (then: playwright install chromium)
-# pip install -e ".[crawl4ai]"         # + crawl4ai      (then: crawl4ai-setup)
-# pip install -e ".[all]"              # everything
-cp .env.example .env                   # add DEEPSEEK_API_KEY for extraction
-```
+# ① 安装（默认 static 后端零额外依赖）
+pip install -e .                       # 核心: httpx, trafilatura, openai, dotenv
+# pip install -e ".[browser]"          # + Playwright（再跑 playwright install chromium）
+# pip install -e ".[crawl4ai]"         # + crawl4ai（再跑 crawl4ai-setup）
 
-`requirements-local-cpu.txt` documents the CPU-only verified set on macbook-m3
-(arm64) and ubuntu, including the one-time browser downloads and the ubuntu
-headless system-lib note. All local backends run CPU-only — no GPU anywhere.
+# ② 配置（抽取需要 DeepSeek 密钥）
+cp .env.example .env                   # 填入 DEEPSEEK_API_KEY
 
-## Quickstart
-
-```bash
-python demo.py                                   # fetch + extract, fully offline-capable
-python -m agentcurl https://example.com          # print clean markdown
-python -m agentcurl https://example.com --extract "the title and a one-line summary"
+# ③ 用起来
+python demo.py                                   # 取页 + 抽取，离线也能跑
+python -m agentcurl https://example.com          # 打印干净 markdown
+python -m agentcurl https://example.com --extract "标题和一句话摘要"
 python -m agentcurl https://example.com --schema '{"title":"str"}' --json
 python -m agentcurl https://example.com --crawl --depth 1 --max-pages 5
 ```
 
-### Switching backends
+### 切换后端
 
 ```bash
-CRAWL_BACKEND=static   python demo.py   # default, no extra install
-CRAWL_BACKEND=jina     python demo.py   # remote reader, zero install (JS handled remotely)
-CRAWL_BACKEND=browser  python demo.py   # JS page via Playwright  (needs: playwright install chromium)
-CRAWL_BACKEND=crawl4ai python demo.py   # fit-markdown + deep crawl (needs: crawl4ai-setup)
-CRAWL_BACKEND=static+firecrawl ROUTER_MODE=fallback python demo.py   # fallback chain
+CRAWL_BACKEND=static   python demo.py   # 默认，零额外安装
+CRAWL_BACKEND=jina     python demo.py   # 远程阅读器，零安装（JS 远端处理）
+CRAWL_BACKEND=browser  python demo.py   # Playwright 渲染 JS（需 playwright install chromium）
+CRAWL_BACKEND=crawl4ai python demo.py   # fit-markdown + 深度爬（需 crawl4ai-setup）
+CRAWL_BACKEND=static+firecrawl ROUTER_MODE=fallback python demo.py   # 回退链
 ```
 
-## Verify
+### 命令行参数速查（`python -m agentcurl`）
+
+| 参数 | 含义 |
+|------|------|
+| `--extract "<一句话>"` | 用自然语言描述要抽什么 → JSON |
+| `--schema '<JSON>'` | 用字段表（`{字段:类型}`）精确指定要抽什么 → JSON |
+| `--crawl` | 爬整站（同域链接），而非只取一页 |
+| `--depth N` / `--max-pages N` | 爬取深度 / 页数上限 |
+| `--json` | 输出 JSON 而非美化文本 |
+| `--learn-login` | 开浏览器让你登录一次，保存会话供以后复用 |
+
+---
+
+## meta 学习：看一遍，下次就会
+
+agentcurl 不该让你每次都重新攻克同一个站点。**meta 层**（默认开，`AGENTCURL_LEARN=0` 关）会为每个
+域名维护一份它学到的「配方」并自动复用：
+
+- **从结果里自学（零操作）**：每次取页都记录「哪个后端在这个域名真的拿到了内容」。设
+  `CRAWL_BACKEND=auto`，下次爬这个域名就**自动路由到学到的最佳后端**。
+- **学一次登录（看你登一遍）**：对登录后才能看的页面，用真浏览器捕获一次会话：
+
+  ```bash
+  python -m agentcurl https://example.com/dashboard --learn-login
+  # 浏览器弹出 → 你手动登录 → 回车，会话被保存
+  ```
+
+  保存的是 Playwright `storage_state`（cookies + localStorage）+ cookie 集。**之后每次爬这个域名都自动回放** ——
+  `browser` 后端重载登录态，`static`/`jina` 带上 cookies —— 登录页就这么「下次做对了」，无需改代码。
+
+> 配方是 `AGENTCURL_RECIPES_DIR`（默认 `.agentcurl/`，已 git 忽略）下的 JSON。因为含会话凭据，
+> 文件以 **owner-only（0600）** 权限写入。
+
+---
+
+## 验证
 
 ```bash
-python tests/test_smoke.py        # offline: real static fetch/crawl over a loopback fixture
-                                  # server + router/extractor/factory units (14 tests)
-RUN_LIVE=1 python tests/test_live.py   # opt-in: real sites + DeepSeek + installed backends
-                                       # (browser/crawl4ai self-skip if not installed)
-python benchmark.py --extract static jina crawl4ai   # latency / md size / links / field accuracy
+python tests/test_smoke.py        # 离线：loopback 起本地服务跑真实 static 取页/爬取
+                                  # + router/extractor/factory/charset/recipe 单测（18 个）
+RUN_LIVE=1 python tests/test_live.py   # 可选：真实站点 + DeepSeek + 已装后端（未装的自动跳过）
+python benchmark.py --extract static jina crawl4ai   # 延迟 / 字符数 / 链接 / 字段命中率
 ```
 
-The offline suite runs with `ResourceWarning` as an error, so a leaked
-connection fails the build. CI (`.github/workflows/ci.yml`) byte-compiles
-everything and runs the offline suite on Python 3.10 / 3.11 / 3.12 for every
-push and PR — core deps only, no browser. The live suite is never run in CI.
+离线测试以 `ResourceWarning` 为错误运行（连接泄漏即挂），CI（`.github/workflows/ci.yml`）在
+Python 3.10/3.11/3.12 上字节编译 + 跑离线套件，仅核心依赖、不开浏览器。live 套件从不在 CI 跑。
 
-### Benchmark
+---
 
-`benchmark.py` runs a URL set through each backend in isolated subprocesses
-(heavy backends interfere when sharing a process). Indicative run (this machine,
-2 public URLs — example.com + iana.org; DeepSeek-V4-Flash):
+## 配置（环境变量 / `.env`）
 
-| backend  | fetch(ms) | md(chars) | links | fields¹ |
-|----------|----------:|----------:|------:|--------:|
-| static   |    ~1990  |      466  |  9.5  |   0.5   |
-| jina     |    ~1990  |     1340  |  0.0  |   1.0   |
-| crawl4ai |    ~4440  |     1268  |  9.5  |   1.0   |
-| browser  |   ~10820  |      466  |  9.5  |   0.5   |
+| 变量 | 默认 | 含义 |
+|------|------|------|
+| `DEEPSEEK_API_KEY` | — | DeepSeek 密钥（OpenAI 兼容）；为空 → 抽取降级为原始 markdown |
+| `DEEPSEEK_MODEL` | `deepseek-v4-flash` | 模型 id |
+| `CRAWL_BACKEND` | `static` | `static` \| `browser` \| `crawl4ai` \| `firecrawl` \| `jina` \| `auto`（按域名学习）\| 加号串如 `static+jina` |
+| `ROUTER_MODE` | `fallback` | 加号串模式：`fallback`（首个非空）\| `fan-out`（最丰富） |
+| `CRAWL_DEPTH` / `CRAWL_MAX_PAGES` | `1` / `20` | 爬取深度 / 页数上限 |
+| `RESPECT_ROBOTS` | `1` | 链接遍历爬取时遵守 robots.txt |
+| `FIRECRAWL_API_KEY` | — | `firecrawl` 后端必需 |
+| `JINA_API_KEY` | — | 可选，提高 r.jina.ai 速率上限 |
+| `AGENTCURL_LEARN` | `1` | 记录每域名结果 + 自动复用配方（`0` 关闭） |
 
-¹ `fields` = fraction of expected schema keys DeepSeek filled. On these two
-*sparse* pages trafilatura (static/browser) strips the `<title>`, so `title`
-comes back null — `jina`/`crawl4ai` keep richer markdown and fill both. On
-content pages all four fill the fields; this is a trait of these minimal test
-URLs, not a backend defect. Rules of thumb: speed → `static`; JS → `browser`;
-LLM-native depth → `crawl4ai`; zero-install → `jina`; blocked sites →
-`firecrawl`. `fetch(ms)` times the fetch only, not the LLM call.
+完整变量（含 browser/crawl4ai 细项）见 `.env.example`。
 
-## MCP server
+---
 
-`mcp/server.py` is a stdio MCP server exposing `agentcurl_fetch(url)`,
-`agentcurl_crawl(url, depth)` and `agentcurl_extract(url, schema)` — each just
-calls `CrawlManager`, so the MCP inherits whatever `CRAWL_BACKEND` selects.
-Register it in `~/.claude.json` / Claude Desktop:
+## 三种入口
 
-```json
-{
-  "mcpServers": {
-    "agentcurl": {
-      "command": "python3",
-      "args": ["/abs/path/to/agentcurl/mcp/server.py"],
-      "env": { "CRAWL_BACKEND": "static" }
-    }
-  }
-}
-```
+- **代码库**：`from agentcurl import CrawlManager`，用 `with CrawlManager() as cm:` 自动释放连接池。
+- **MCP 服务**：`mcp/server.py` 暴露 `agentcurl_fetch / _crawl / _extract` 三个工具，注册进
+  `~/.claude.json` 即可在 Claude Code 里调用（详见 `mcp/README.md`，已 live 验证 stdio JSON-RPC）。
+- **Claude Code SKILL**：`skill/SKILL.md`（`/agentcurl`）是薄会话层，shell 调 `python -m agentcurl`。
 
-The `server.py` shim loads the repo's own `.env`, so your `DEEPSEEK_API_KEY`
-stays in `.env` and out of the client config. After `pip install -e .` you can
-instead use `"args": ["-m", "agentcurl.mcp"]`. Verified live over stdio JSON-RPC
-(initialize → tools/list → `agentcurl_fetch` → 200). See `mcp/README.md`.
+---
 
-## Claude Code SKILL
+## 项目结构
 
-`skill/SKILL.md` (`agentcurl`) is a thin conversational layer that shells out to
-`python -m agentcurl <url> --extract "<prompt>"`. Copy it to
-`~/.claude/skills/agentcurl/` and ask: *"/agentcurl crawl example.com and pull
-the title and summary"*. Run `pip install -e .` so `python -m agentcurl` resolves
-from any directory.
-
-## Configuration (env / `.env`)
-
-| Var | Default | Meaning |
-|-----|---------|---------|
-| `DEEPSEEK_API_KEY` | — | DeepSeek key (OpenAI-compatible); empty → extraction falls back to raw markdown |
-| `DEEPSEEK_MODEL` | `deepseek-v4-flash` | model id |
-| `DEEPSEEK_API_BASE` | `https://api.deepseek.com` | base url |
-| `CRAWL_BACKEND` | `static` | `static` \| `browser` \| `crawl4ai` \| `firecrawl` \| `jina` \| `auto` (learned per domain) \| a `+`-list e.g. `static+jina` |
-| `ROUTER_MODE` | `fallback` | for a `+`-list: `fallback` (first non-empty) \| `fan-out` (richest) |
-| `AGENTCURL_LEARN` | `1` | record per-domain outcomes + auto-apply learned recipes (`0` to disable) |
-| `AGENTCURL_RECIPES_DIR` | `.agentcurl/recipes` | where learned recipes + login sessions are stored |
-| `CRAWL_DEPTH` | `1` | link-following depth for `crawl()` |
-| `CRAWL_MAX_PAGES` | `20` | hard cap on pages per `crawl()` |
-| `REQUEST_TIMEOUT` | `30` | per-request HTTP timeout (seconds) |
-| `RATE_LIMIT_DELAY` | `0` | seconds between same-domain fetches (be polite) |
-| `RESPECT_ROBOTS` | `1` | honor robots.txt on the link-walk crawl |
-| `FIRECRAWL_API_KEY` | — | required for the `firecrawl` backend |
-| `JINA_API_KEY` | — | optional; raises r.jina.ai rate limits |
-
-Full set with browser/crawl4ai tunables in `.env.example`.
-
-## Notes & limits
-
-- **Offline-friendly:** the `static` backend + the raw-markdown extraction
-  fallback run with no key and no network beyond the target site. The offline
-  test suite needs neither (it serves fixtures over loopback).
-- **Politeness:** the link-walk crawl honors `robots.txt` (fail-open if it can't
-  be fetched) and the `RATE_LIMIT_DELAY` throttle. Native deep-crawl backends
-  manage their own fetching.
-- **Connection reuse:** the `static` backend keeps one pooled `httpx.Client`
-  across a crawl (keep-alive); `with CrawlManager() as cm:` releases it.
-- **Charset detection:** legacy sites (e.g. GBK/GB2312 Chinese pages) that send
-  no charset header are decoded via their `<meta charset>` like a browser would,
-  so `static` doesn't mojibake them. JS-rendered pages (YouTube, SPAs) still need
-  `browser`, `crawl4ai`, or the remote `jina` reader — `static` only sees the
-  initial HTML shell.
-- **One heavy backend per process:** Playwright and crawl4ai drive real browsers
-  — the live tests isolate each in its own subprocess.
-
-## Out of scope (v1)
-
-Proxy rotation / stealth anti-bot (use **firecrawl** as the escape hatch) and
-distributed/queue-based large crawls (Scrapy/Crawlee) — use **crawl4ai** or
-**firecrawl** native deep-crawl instead.
-
-## Layout
-
-```
+```text
 src/agentcurl/
-  manager.py            CrawlManager facade: fetch / crawl / extract + meta layer
-  extract.py            DeepSeek schema/NL → JSON (+ offline raw fallback)
-  recipes.py            per-domain learned recipes (best backend, session, stats)
-  login.py              watch-user-login-once capture (headed Playwright)
-  llm.py                DeepSeek-V4-Flash OpenAI-compatible client
-  fetch_utils.py        pooled GET, charset decode, robots gate, links, rate limit
-  config.py             env-driven config
+  manager.py            CrawlManager 门面：fetch / crawl / extract + meta 层
+  extract.py            DeepSeek 字段表/自然语言 → JSON（+ 离线原始降级）
+  recipes.py            每域名学习配方（最佳后端、登录会话、成功率统计）
+  login.py              看用户登录一次的捕获（有头 Playwright）
+  llm.py                DeepSeek-V4-Flash OpenAI 兼容客户端
+  fetch_utils.py        连接池 GET、字符集解码、robots 闸、链接抽取、限速
+  config.py             环境变量配置
   types.py              Document, ExtractResult
-  mcp.py                MCP server (agentcurl_fetch / _crawl / _extract)
+  mcp.py                MCP 服务（agentcurl_fetch / _crawl / _extract）
   backends/
-    base.py             CrawlBackend Protocol + CrawlMixin (default crawl)
-    static.py           httpx + trafilatura  (default)
+    base.py             CrawlBackend 协议 + CrawlMixin（默认 crawl）
+    static.py           httpx + trafilatura（默认）
     browser.py          Playwright
-    crawl4ai_backend.py crawl4ai (native deep-crawl)
+    crawl4ai_backend.py crawl4ai（原生深度爬）
     firecrawl_backend.py Firecrawl REST
-    jina_backend.py     r.jina.ai reader
-    router.py           fallback chain / fan-out
+    jina_backend.py     r.jina.ai 阅读器
+    router.py           回退链 / 扇出
 demo.py · benchmark.py · mcp/server.py · skill/SKILL.md · tests/
 ```
 
-## Contributing
+---
 
-See [CONTRIBUTING.md](CONTRIBUTING.md) — dev setup, the offline/live test split,
-and a step-by-step guide to adding a new crawl backend behind the `CrawlBackend`
-Protocol.
+## 设计取舍
 
-## License
+- **零依赖默认、重型按需**：`static`（httpx + trafilatura）零额外安装就能搞定大多数静态 HTML；
+  只有站点真需要时才装 Playwright / crawl4ai 或配 Firecrawl 密钥。
+- **爬取免费送**：`CrawlMixin` 给每个后端一个基于自身 `fetch` 的同域广度优先 `crawl()`，所以只会取单页的
+  后端也能爬站；有原生深度爬的（crawl4ai / firecrawl）则覆盖它。
+- **抽取是一等公民、且优雅降级**：`extract` 不是事后补丁；没密钥（或任何 LLM 出错）时返回原始 markdown 而非报错。
+- **凭据文件 owner-only**：配方/登录会话含 cookies，目录 0700、文件 0600 写入。
 
-[MIT](LICENSE)
+### v1 不做
+
+代理轮换 / 反指纹隐身（用 **firecrawl** 当逃生舱）、分布式队列大规模爬（Scrapy/Crawlee）——
+深度爬请用 **crawl4ai** / **firecrawl** 的原生能力。
+
+---
+
+## 附录：名词速查
+
+| 名词 | 一句话解释 |
+|------|------------|
+| **后端 / backend** | 实际干活的爬虫引擎。本项目 5 个，能力不同但接口统一，靠 `CRAWL_BACKEND` 切换。 |
+| **Document** | 所有后端返回的统一结构：`url / status / markdown / html / title / links / metadata`。 |
+| **结构化抽取 / extract** | 把网页正文交给大模型，按字段表或一句话要求吐回 JSON。没密钥时降级返回原始 markdown。 |
+| **回退链 / router** | `CRAWL_BACKEND=a+b`：先试 a，取不到内容自动落到 b。`fan-out` 则全试取最丰富的。 |
+| **fit-markdown** | crawl4ai 产出的「为大模型精简过」的高信息密度 markdown。 |
+| **meta 学习 / 配方 / recipe** | 仓库记住每个域名怎么爬最顺（最佳后端 + 登录会话），下次自动复用。 |
+| **storage_state** | Playwright 的会话快照（cookies + localStorage），登录捕获后用于「重放登录态」。 |
+| **robots.txt 闸** | 链接遍历爬取前检查站点的 robots 规则；取不到则放行（fail-open）。 |
+| **DeepSeek** | 本项目用于结构化抽取的大模型服务（OpenAI 兼容，需自备密钥）。 |
+
+---
+
+## 贡献 & 许可
+
+贡献指南见 [CONTRIBUTING.md](CONTRIBUTING.md)（含「如何新增一个后端」的步骤）。许可：[MIT](LICENSE)。

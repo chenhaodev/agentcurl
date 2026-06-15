@@ -1,0 +1,14 @@
+{
+  "domain": "www.xywy.com",
+  "best_backend": "router(static+jina)",
+  "cookies": {},
+  "storage_state": null,
+  "headers": {},
+  "attempts": {
+    "router(static+jina)": 1
+  },
+  "successes": {
+    "router(static+jina)": 1
+  },
+  "notes": ""
+}

@@ -1,0 +1,14 @@
+{
+  "domain": "www.youtube.com",
+  "best_backend": "jina",
+  "cookies": {},
+  "storage_state": null,
+  "headers": {},
+  "attempts": {
+    "jina": 2
+  },
+  "successes": {
+    "jina": 2
+  },
+  "notes": ""
+}
