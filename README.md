@@ -9,13 +9,19 @@ for structured extraction. Drive it from **repo code**, an **MCP server**, or a
 Sibling project of [agentmem](https://github.com/chenhaodev/agentmem) and built on
 the same shape: *one interface, many pluggable backends, env-switched.*
 
+**Status:** verified live — `static`, `browser` (Playwright), `crawl4ai`
+(fit-markdown + native deep-crawl), and `jina`, plus DeepSeek-V4-Flash structured
+extraction, all run end-to-end against real sites. `firecrawl` is code-complete
+but exercised only offline (needs a paid API key).
+
 ```python
 from agentcurl import CrawlManager
 
-cm = CrawlManager()                              # backend chosen by CRAWL_BACKEND
-doc = cm.fetch("https://example.com")            # -> Document (markdown + links + meta)
-docs = cm.crawl("https://example.com", depth=1)  # -> list[Document]
-res = cm.extract(doc, {"title": "str", "price": "number"})  # -> ExtractResult (JSON)
+# CrawlManager is a context manager — `with` releases pooled connections cleanly
+with CrawlManager() as cm:                           # backend chosen by CRAWL_BACKEND
+    doc = cm.fetch("https://example.com")            # -> Document (markdown + links + meta)
+    docs = cm.crawl("https://example.com", depth=1)  # -> list[Document]
+    res = cm.extract(doc, {"title": "str", "price": "number"})  # -> ExtractResult (JSON)
 ```
 
 ## Backends
@@ -72,18 +78,32 @@ CRAWL_BACKEND=static+firecrawl ROUTER_MODE=fallback python demo.py   # fallback 
 
 ```bash
 python tests/test_smoke.py        # offline: real static fetch/crawl over a loopback
-                                  # fixture server + router/extractor/factory units
-RUN_LIVE=1 python tests/test_live.py   # opt-in: real sites + DeepSeek + remote backends
+                                  # fixture server + router/extractor/factory units (14 tests)
+RUN_LIVE=1 python tests/test_live.py   # opt-in: real sites + DeepSeek + installed backends
+                                       # (browser/crawl4ai self-skip if not installed)
 python benchmark.py               # latency / md size / links per backend
-python benchmark.py --extract static jina    # also score extraction-field accuracy
+python benchmark.py --extract static jina crawl4ai   # also score extraction-field accuracy
 ```
 
-### Benchmark (example shape — your numbers vary by network)
+The offline suite runs with `ResourceWarning` as an error, so a leaked
+connection fails the build. See [CONTRIBUTING.md](CONTRIBUTING.md) for the
+backend-extension guide.
 
-| backend | fetch(ms) | md(chars) | links | fields |
+### Benchmark (measured live, 2 public URLs — example.com + iana.org; your numbers vary by network)
+
+| backend | fetch(ms) | md(chars) | links | fields¹ |
 |---|---|---|---|---|
-| static | ~120 | ~1500 | ~3 | 1.0 |
-| jina | ~900 | ~1400 | 0 | 1.0 |
+| static | ~1990 | 466 | 9.5 | 0.5 |
+| jina | ~1990 | 1340 | 0 | 1.0 |
+| crawl4ai | ~4440 | 1268 | 9.5 | 1.0 |
+| browser | ~10820 | 466 | 9.5 | 0.5 |
+
+¹ `fields` = fraction of expected schema keys DeepSeek filled. On these two
+sparse pages, trafilatura (static/browser) strips the `<title>`, so the `title`
+field comes back null — `jina`/`crawl4ai` keep richer markdown and fill both.
+On content pages all four fill the fields; this is a known trait of these
+minimal test URLs, not a backend defect. `fetch(ms)` times the fetch only, not
+the LLM call.
 
 ## MCP server
 
@@ -96,22 +116,27 @@ Register it in `~/.claude.json` / Claude Desktop:
 {
   "mcpServers": {
     "agentcurl": {
-      "command": "python",
-      "args": ["-m", "agentcurl.mcp"],
-      "env": { "CRAWL_BACKEND": "static", "DEEPSEEK_API_KEY": "..." }
+      "command": "python3",
+      "args": ["/abs/path/to/agentcurl/mcp/server.py"],
+      "env": { "CRAWL_BACKEND": "static" }
     }
   }
 }
 ```
 
-(Or point `command`/`args` at `mcp/server.py` directly.) See `mcp/README.md`.
+The `server.py` shim loads the repo's own `.env`, so your `DEEPSEEK_API_KEY`
+stays in `.env` and out of the client config. If you `pip install -e .`, you can
+instead use `"command": "python3", "args": ["-m", "agentcurl.mcp"]`. Verified
+live over stdio JSON-RPC (initialize → tools/list → `agentcurl_fetch` → 200).
+See `mcp/README.md`.
 
 ## Claude Code SKILL
 
 `skill/SKILL.md` (`agentcurl`) is a thin conversational layer that shells out to
-`python -m agentcurl <url> --extract "<prompt>"`. Copy `skill/` to
+`python -m agentcurl <url> --extract "<prompt>"`. Copy `skill/SKILL.md` to
 `~/.claude/skills/agentcurl/` and ask: *"/agentcurl crawl example.com and pull
-the title and summary"*.
+the title and summary"*. Run `pip install -e .` so `python -m agentcurl` and the
+`agentcurl` console script resolve from any directory.
 
 ## Cross-platform (m3 / ubuntu)
 
@@ -127,6 +152,12 @@ Proxy rotation / stealth anti-bot (use **firecrawl** as the escape hatch) and
 distributed/queue-based large crawls (Scrapy/Crawlee) — use **crawl4ai** or
 **firecrawl** native deep-crawl instead.
 
+## Contributing
+
+See [CONTRIBUTING.md](CONTRIBUTING.md) — dev setup, the offline/live test split,
+and a step-by-step guide to adding a new crawl backend behind the `CrawlBackend`
+Protocol.
+
 ## License
 
-MIT
+[MIT](LICENSE)
