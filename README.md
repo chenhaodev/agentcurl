@@ -8,6 +8,10 @@
 
 `5 种后端` · `零依赖默认引擎` · `1 个变量切换` · `网页 → JSON` · `3 种入口` · `纯 CPU` · `实测可爬全球 Top10 的 9 个`
 
+![demo](docs/demo.gif)
+
+> 上面这段演示由 [`demo.tape`](demo.tape) 用 [vhs](https://github.com/charmbracelet/vhs) 录制（`vhs demo.tape`）。
+
 [agentmem](https://github.com/chenhaodev/agentmem) 的姊妹项目，沿用同一形态：*一套通用接口、多个可插拔后端、环境变量切换*。
 
 ---
