@@ -9,7 +9,7 @@ output.
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import asdict, dataclass, field
 from typing import Any
 
 
@@ -33,6 +33,19 @@ class Document:
             f"links={len(self.links)})"
         )
 
+    def to_dict(self) -> dict[str, Any]:
+        """Full JSON-serializable form (includes raw html)."""
+        return asdict(self)
+
+    def to_summary(self) -> dict[str, Any]:
+        """Compact form for tool output: drops the bulky raw html, adds cheap
+        stats. Used by the MCP server to keep payloads small."""
+        d = self.to_dict()
+        d.pop("html", None)
+        d["markdown_chars"] = len(self.markdown)
+        d["link_count"] = len(self.links)
+        return d
+
 
 @dataclass
 class ExtractResult:
@@ -47,3 +60,6 @@ class ExtractResult:
     def __repr__(self) -> str:
         kind = "raw-markdown" if self.raw else "json"
         return f"ExtractResult(url={self.url!r}, kind={kind}, fields={self.fields})"
+
+    def to_dict(self) -> dict[str, Any]:
+        return asdict(self)

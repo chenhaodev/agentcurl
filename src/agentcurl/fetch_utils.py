@@ -17,9 +17,13 @@ import httpx
 from .config import Config
 
 
-def http_get(url: str, config: Config) -> httpx.Response:
-    """One GET with the configured UA, timeout and redirect following."""
-    headers = {"User-Agent": config.user_agent}
+def http_get(
+    url: str, config: Config, *, extra_headers: dict[str, str] | None = None
+) -> httpx.Response:
+    """One GET with the configured UA, timeout and redirect following. The single
+    source of truth for outbound HTTP — backends pass `extra_headers` for any
+    request-specific headers (e.g. jina's Accept / Authorization)."""
+    headers = {"User-Agent": config.user_agent, **(extra_headers or {})}
     return httpx.get(
         url,
         headers=headers,
@@ -106,12 +110,7 @@ class RobotsGate:
     def _load(self, origin: str) -> urllib.robotparser.RobotFileParser | None:
         rp = urllib.robotparser.RobotFileParser()
         try:
-            resp = httpx.get(
-                f"{origin}/robots.txt",
-                headers={"User-Agent": self.config.user_agent},
-                timeout=self.config.request_timeout,
-                follow_redirects=True,
-            )
+            resp = http_get(f"{origin}/robots.txt", self.config)
             if resp.status_code >= 400:
                 return None  # no usable robots.txt -> allow everything
             rp.parse(resp.text.splitlines())

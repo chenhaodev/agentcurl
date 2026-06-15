@@ -13,21 +13,11 @@ stays a thin conversational layer. Uses whatever CRAWL_BACKEND is configured
 from __future__ import annotations
 
 import argparse
-import dataclasses
 import json
 import sys
 
 from .extract import parse_target
 from .manager import CrawlManager
-from .types import Document, ExtractResult
-
-
-def _doc_dict(doc: Document) -> dict:
-    return dataclasses.asdict(doc)
-
-
-def _result_dict(res: ExtractResult) -> dict:
-    return dataclasses.asdict(res)
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -47,7 +37,7 @@ def main(argv: list[str] | None = None) -> int:
         target = parse_target(args.schema) if args.schema else args.extract
         res = cm.extract(args.url, target)
         if args.json:
-            print(json.dumps(_result_dict(res), indent=2, ensure_ascii=False))
+            print(json.dumps(res.to_dict(), indent=2, ensure_ascii=False))
         else:
             print(f"# extract {res.url}  ({'raw markdown' if res.raw else 'json'})")
             print(res.data if res.raw else json.dumps(res.data, indent=2, ensure_ascii=False))
@@ -56,7 +46,7 @@ def main(argv: list[str] | None = None) -> int:
     if args.crawl:
         docs = cm.crawl(args.url, depth=args.depth, max_pages=args.max_pages)
         if args.json:
-            print(json.dumps([_doc_dict(d) for d in docs], indent=2, ensure_ascii=False))
+            print(json.dumps([d.to_dict() for d in docs], indent=2, ensure_ascii=False))
         else:
             print(f"# crawled {len(docs)} page(s) via {cm.backend.name}")
             for d in docs:
@@ -65,7 +55,7 @@ def main(argv: list[str] | None = None) -> int:
 
     doc = cm.fetch(args.url)
     if args.json:
-        print(json.dumps(_doc_dict(doc), indent=2, ensure_ascii=False))
+        print(json.dumps(doc.to_dict(), indent=2, ensure_ascii=False))
     else:
         print(f"# {doc.title or doc.url}  (backend={cm.backend.name}, status={doc.status})")
         print(doc.markdown)

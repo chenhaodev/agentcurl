@@ -13,20 +13,10 @@ Requires the MCP SDK:  pip install "mcp[cli]"
 
 from __future__ import annotations
 
-import dataclasses
 import json
 
 from .extract import parse_target
 from .manager import CrawlManager
-
-
-def _doc_summary(doc) -> dict:
-    """Compact dict — full markdown plus cheap stats, no giant raw HTML blob."""
-    d = dataclasses.asdict(doc)
-    d.pop("html", None)  # keep payloads small; markdown is the useful surface
-    d["markdown_chars"] = len(doc.markdown)
-    d["link_count"] = len(doc.links)
-    return d
 
 
 def build_server():
@@ -50,7 +40,7 @@ def build_server():
             url: The absolute URL to fetch.
         """
         doc = manager.fetch(url)
-        return json.dumps(_doc_summary(doc), ensure_ascii=False)
+        return json.dumps(doc.to_summary(), ensure_ascii=False)
 
     @mcp.tool()
     def agentcurl_crawl(url: str, depth: int = 1, max_pages: int = 20) -> str:
@@ -62,7 +52,7 @@ def build_server():
             max_pages: Hard cap on pages fetched (default 20).
         """
         docs = manager.crawl(url, depth=depth, max_pages=max_pages)
-        return json.dumps([_doc_summary(d) for d in docs], ensure_ascii=False)
+        return json.dumps([d.to_summary() for d in docs], ensure_ascii=False)
 
     @mcp.tool()
     def agentcurl_extract(url: str, schema: str) -> str:
@@ -75,7 +65,7 @@ def build_server():
                 natural-language instruction (e.g. "the title and author").
         """
         res = manager.extract(url, parse_target(schema))
-        return json.dumps(dataclasses.asdict(res), ensure_ascii=False)
+        return json.dumps(res.to_dict(), ensure_ascii=False)
 
     return mcp
 

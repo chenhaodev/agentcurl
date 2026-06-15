@@ -11,10 +11,9 @@ on jina is shallow by nature).
 
 from __future__ import annotations
 
-import httpx
-
 from .base import CrawlMixin
 from ..config import Config
+from ..fetch_utils import http_get
 from ..types import Document
 
 
@@ -26,7 +25,6 @@ class JinaBackend(CrawlMixin):
 
     def fetch(self, url: str, **opts) -> Document:
         headers = {
-            "User-Agent": self.config.user_agent,
             "Accept": "text/markdown",
             # ask the reader for structured extras in response headers/body
             "X-With-Links-Summary": "true",
@@ -35,12 +33,7 @@ class JinaBackend(CrawlMixin):
             headers["Authorization"] = f"Bearer {self.config.jina_api_key}"
 
         reader_url = f"{self.config.jina_base_url.rstrip('/')}/{url}"
-        resp = httpx.get(
-            reader_url,
-            headers=headers,
-            timeout=self.config.request_timeout,
-            follow_redirects=True,
-        )
+        resp = http_get(reader_url, self.config, extra_headers=headers)
         # On an error status (429 rate-limit, 4xx/5xx) the body is an error
         # message, not page content — drop it to empty markdown so a router
         # fallback chain moves on to the next backend instead of accepting it.
