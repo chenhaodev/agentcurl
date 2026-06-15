@@ -38,6 +38,15 @@ def _cfg(backend: str) -> Config:
     return cfg
 
 
+def _missing_browser(e: Exception) -> bool:
+    """True when a browser-driven backend failed only because its browser binary
+    or package isn't installed — a skip, not a real failure."""
+    msg = str(e).lower()
+    return isinstance(e, ImportError) or any(
+        s in msg for s in ("executable doesn't exist", "playwright install", "browser")
+    )
+
+
 def test_static_live():
     """Real httpx + trafilatura against example.com."""
     if _skip("static"):
@@ -77,9 +86,11 @@ def test_browser_live():
     try:
         cm = CrawlManager(_cfg("browser"))
         doc = cm.fetch("https://example.com")
-    except ImportError as e:
-        print(f"skip browser ({e})")
-        return
+    except Exception as e:
+        if _missing_browser(e):
+            print(f"skip browser (not installed: run `playwright install chromium`)")
+            return
+        raise
     assert doc.status in (200, 0) and doc.markdown.strip(), doc
     print("ok  browser live: rendered example.com")
 
@@ -90,9 +101,11 @@ def test_crawl4ai_live():
     try:
         cm = CrawlManager(_cfg("crawl4ai"))
         doc = cm.fetch("https://example.com")
-    except ImportError as e:
-        print(f"skip crawl4ai ({e})")
-        return
+    except Exception as e:
+        if _missing_browser(e):
+            print(f"skip crawl4ai (not installed: run `pip install crawl4ai && crawl4ai-setup`)")
+            return
+        raise
     assert doc.markdown.strip(), "crawl4ai returned empty markdown"
     print("ok  crawl4ai live: fit-markdown returned")
 
@@ -107,11 +120,17 @@ def test_firecrawl_live():
 
 
 def main():
-    tests = [v for k, v in sorted(globals().items()) if k.startswith("test_")]
-    for t in tests:
-        t()
-    print(f"\n{len(tests)} checks done")
+    tests = [(k, v) for k, v in sorted(globals().items()) if k.startswith("test_")]
+    failures = []
+    for name, t in tests:
+        try:
+            t()
+        except Exception as e:  # isolate: one live failure shouldn't hide the rest
+            failures.append(name)
+            print(f"FAIL {name}: {e!r}")
+    print(f"\n{len(tests)} checks run, {len(failures)} failed")
+    return 1 if failures else 0
 
 
 if __name__ == "__main__":
-    main()
+    sys.exit(main())
