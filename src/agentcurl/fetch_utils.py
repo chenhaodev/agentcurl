@@ -29,7 +29,9 @@ def http_get(url: str, config: Config) -> httpx.Response:
 
 
 def same_domain(url: str, base: str) -> bool:
-    """True when `url` shares a registrable host with `base` (ignores scheme)."""
+    """True when `url` has the exact same host (and port) as `base`, ignoring
+    scheme. Intentionally strict: `www.example.com` is treated as a different
+    host from `example.com`, so a crawl stays within the host it started on."""
     try:
         return urlparse(url).netloc == urlparse(base).netloc
     except Exception:

@@ -17,6 +17,7 @@ import dataclasses
 import json
 import sys
 
+from .extract import parse_target
 from .manager import CrawlManager
 from .types import Document, ExtractResult
 
@@ -43,7 +44,7 @@ def main(argv: list[str] | None = None) -> int:
     cm = CrawlManager()
 
     if args.extract or args.schema:
-        target = json.loads(args.schema) if args.schema else args.extract
+        target = parse_target(args.schema) if args.schema else args.extract
         res = cm.extract(args.url, target)
         if args.json:
             print(json.dumps(_result_dict(res), indent=2, ensure_ascii=False))

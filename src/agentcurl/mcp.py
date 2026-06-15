@@ -15,8 +15,8 @@ from __future__ import annotations
 
 import dataclasses
 import json
-from typing import Any
 
+from .extract import parse_target
 from .manager import CrawlManager
 
 
@@ -74,13 +74,7 @@ def build_server():
                 (e.g. '{"title":"str","price":"number"}') or a plain
                 natural-language instruction (e.g. "the title and author").
         """
-        target: Any
-        try:
-            parsed = json.loads(schema)
-            target = parsed if isinstance(parsed, (dict, list)) else schema
-        except (json.JSONDecodeError, TypeError):
-            target = schema  # treat as a natural-language prompt
-        res = manager.extract(url, target)
+        res = manager.extract(url, parse_target(schema))
         return json.dumps(dataclasses.asdict(res), ensure_ascii=False)
 
     return mcp

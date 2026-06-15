@@ -12,8 +12,10 @@ Modes (ROUTER_MODE):
             result, tagging the rest in metadata for comparison.
 
 A child raising doesn't abort the chain; its error is recorded and the next
-child is tried. If every child fails (or all return empty), the last error is
-re-raised so the caller sees a real failure rather than a silent empty doc.
+child is tried. If at least one child raised and none produced content, the last
+error is re-raised so the caller sees a real failure. If every child returned
+cleanly but empty (no exceptions), the caller gets an empty result — an empty
+page is a legitimate outcome, not an error.
 """
 
 from __future__ import annotations

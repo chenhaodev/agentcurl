@@ -48,7 +48,8 @@ class FirecrawlBackend(CrawlMixin):
             html=data.get("html", "") or "",
             title=meta.get("title", "") or "",
             links=data.get("links", []) or [],
-            metadata={"backend": self.name, **{k: v for k, v in meta.items() if k != "links"}},
+            # spread API meta first so our own "backend" tag always wins
+            metadata={**{k: v for k, v in meta.items() if k != "links"}, "backend": self.name},
         )
 
     def fetch(self, url: str, **opts) -> Document:
@@ -84,8 +85,12 @@ class FirecrawlBackend(CrawlMixin):
         status_url = f"{self._base}/v1/crawl/{job_id}"
         deadline = time.monotonic() + max(self.config.request_timeout, 60) * 4
         while time.monotonic() < deadline:
-            poll = httpx.get(status_url, headers=self._headers, timeout=self.config.request_timeout)
-            poll.raise_for_status()
+            try:
+                poll = httpx.get(status_url, headers=self._headers, timeout=self.config.request_timeout)
+                poll.raise_for_status()
+            except httpx.HTTPError:
+                time.sleep(2)  # transient — the job is still running; retry
+                continue
             body = poll.json()
             if body.get("status") == "completed":
                 return [

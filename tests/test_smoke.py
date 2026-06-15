@@ -23,7 +23,7 @@ from agentcurl.backends import build_backend  # noqa: E402
 from agentcurl.backends.base import CrawlBackend, CrawlMixin  # noqa: E402
 from agentcurl.backends.router import RouterBackend  # noqa: E402
 from agentcurl.backends.static import StaticBackend  # noqa: E402
-from agentcurl.extract import Extractor  # noqa: E402
+from agentcurl.extract import Extractor, parse_target  # noqa: E402
 from agentcurl.fetch_utils import extract_links  # noqa: E402
 from agentcurl.llm import DeepSeekLLM  # noqa: E402
 
@@ -212,6 +212,25 @@ def test_extractor_offline_raw_fallback():
     assert res.data == "# Title\nbody text"
     assert res.fields == ["title", "summary"]
     print("ok  extractor: offline/no-key falls back to raw markdown")
+
+
+def test_parse_target_json_vs_prompt():
+    assert parse_target('{"title":"str"}') == {"title": "str"}  # dict schema
+    assert parse_target('["title","price"]') == ["title", "price"]  # list schema
+    assert parse_target("the article title and author") == "the article title and author"
+    assert parse_target("not json {oops") == "not json {oops"  # invalid JSON -> prompt
+    assert parse_target("42") == "42"  # bare scalar JSON is a prompt, not a schema
+    print("ok  parse_target: dict/list schema vs natural-language prompt")
+
+
+def test_extractor_list_schema_fields():
+    """A list schema must surface its field names (regression: lists were
+    silently downgraded to a prompt with empty fields)."""
+    ext = Extractor(DeepSeekLLM(_cfg()))  # no key -> raw path, but fields still set
+    doc = Document(url="http://x.test", markdown="body")
+    res = ext.extract(doc, ["title", "price"])
+    assert res.fields == ["title", "price"], res.fields
+    print("ok  extractor: list schema surfaces its field names")
 
 
 def test_manager_extract_from_document_offline():

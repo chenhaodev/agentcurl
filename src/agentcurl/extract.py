@@ -36,9 +36,27 @@ def _truncate(markdown: str) -> str:
     return markdown if len(markdown) <= _MAX_CHARS else markdown[:_MAX_CHARS]
 
 
-def _schema_fields(schema: Any) -> list[str]:
-    if isinstance(schema, dict):
-        return list(schema.keys())
+def parse_target(text: str) -> Any:
+    """Normalize a CLI/MCP string into an extraction target: a JSON object/list
+    becomes a schema; anything else stays a natural-language prompt string."""
+    try:
+        parsed = json.loads(text)
+    except (json.JSONDecodeError, TypeError):
+        return text
+    return parsed if _is_schema(parsed) else text
+
+
+def _is_schema(target: Any) -> bool:
+    """A schema is a dict (field -> type) or a list of field names. A plain
+    string is a natural-language instruction, not a schema."""
+    return isinstance(target, (dict, list))
+
+
+def _schema_fields(target: Any) -> list[str]:
+    if isinstance(target, dict):
+        return list(target.keys())
+    if isinstance(target, list):
+        return [str(f) for f in target]
     return []
 
 
@@ -77,7 +95,7 @@ class Extractor:
             )
 
     def _call_llm(self, markdown: str, target: Any) -> Any:
-        if isinstance(target, dict):
+        if _is_schema(target):
             system = _SCHEMA_SYS
             user = (
                 f"JSON schema:\n{json.dumps(target)}\n\n"

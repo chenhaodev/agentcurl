@@ -41,7 +41,10 @@ class JinaBackend(CrawlMixin):
             timeout=self.config.request_timeout,
             follow_redirects=True,
         )
-        markdown = resp.text
+        # On an error status (429 rate-limit, 4xx/5xx) the body is an error
+        # message, not page content — drop it to empty markdown so a router
+        # fallback chain moves on to the next backend instead of accepting it.
+        markdown = resp.text if resp.status_code < 400 else ""
         title = _first_heading(markdown)
         return Document(
             url=url,

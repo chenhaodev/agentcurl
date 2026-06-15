@@ -35,6 +35,17 @@ class Crawl4AIBackend(CrawlMixin):
     def _run(self, coro):
         return self._loop.run_until_complete(coro)
 
+    def close(self) -> None:
+        """Close the persistent event loop. Safe to call more than once."""
+        if self._loop is not None and not self._loop.is_closed():
+            self._loop.close()
+
+    def __del__(self):  # best-effort cleanup; don't raise during GC
+        try:
+            self.close()
+        except Exception:
+            pass
+
     def _to_document(self, result) -> Document:
         """Map a crawl4ai CrawlResult onto our Document."""
         md_obj = getattr(result, "markdown", None)
