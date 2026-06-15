@@ -279,6 +279,11 @@ Full set with browser/crawl4ai tunables in `.env.example`.
   manage their own fetching.
 - **Connection reuse:** the `static` backend keeps one pooled `httpx.Client`
   across a crawl (keep-alive); `with CrawlManager() as cm:` releases it.
+- **Charset detection:** legacy sites (e.g. GBK/GB2312 Chinese pages) that send
+  no charset header are decoded via their `<meta charset>` like a browser would,
+  so `static` doesn't mojibake them. JS-rendered pages (YouTube, SPAs) still need
+  `browser`, `crawl4ai`, or the remote `jina` reader — `static` only sees the
+  initial HTML shell.
 - **One heavy backend per process:** Playwright and crawl4ai drive real browsers
   — the live tests isolate each in its own subprocess.
 

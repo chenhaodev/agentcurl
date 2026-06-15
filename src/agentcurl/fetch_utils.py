@@ -7,6 +7,7 @@ consistent. Pure-python + httpx; no per-backend networking quirks.
 
 from __future__ import annotations
 
+import re
 import time
 import urllib.robotparser
 from html.parser import HTMLParser
@@ -15,6 +16,36 @@ from urllib.parse import urldefrag, urljoin, urlparse
 import httpx
 
 from .config import Config
+
+# <meta charset="gbk"> or <meta http-equiv=... content="text/html; charset=gb2312">
+_META_CHARSET = re.compile(
+    rb"""<meta[^>]+?charset\s*=\s*["']?\s*([a-zA-Z0-9_\-]+)""", re.IGNORECASE
+)
+
+
+def decode_html(resp: httpx.Response) -> str:
+    """Decode a response body to text using the *right* charset.
+
+    httpx only trusts the HTTP Content-Type header; many sites (notably legacy
+    Chinese sites on GBK/GB2312) send no charset there, so httpx silently
+    mis-decodes to UTF-8 and produces mojibake. Browsers instead sniff the
+    `<meta charset>` declaration in the HTML — we do the same, preferring:
+    HTTP header charset → `<meta charset>` → UTF-8 (errors replaced).
+    """
+    if resp.charset_encoding:  # explicit header charset — trust it
+        return resp.text
+    raw = resp.content
+    match = _META_CHARSET.search(raw[:4096])  # charset must appear early in <head>
+    if match:
+        declared = match.group(1).decode("ascii", "ignore").lower()
+        try:
+            return raw.decode(declared)
+        except (LookupError, UnicodeDecodeError):
+            pass
+    try:
+        return raw.decode("utf-8")
+    except UnicodeDecodeError:
+        return raw.decode("utf-8", "replace")
 
 
 def http_get(

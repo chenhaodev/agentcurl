@@ -13,7 +13,7 @@ import httpx
 
 from .base import CrawlMixin
 from ..config import Config
-from ..fetch_utils import build_client, extract_links, http_get
+from ..fetch_utils import build_client, decode_html, extract_links, http_get
 from ..types import Document
 
 
@@ -44,7 +44,7 @@ class StaticBackend(CrawlMixin):
 
     def fetch(self, url: str, **opts) -> Document:
         resp = http_get(url, self.config, client=self.client)
-        html = resp.text
+        html = decode_html(resp)  # charset-aware (handles GBK/legacy-encoded sites)
         markdown, title, meta = self._extract(html, url)
         return Document(
             url=str(resp.url),

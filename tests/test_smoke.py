@@ -24,7 +24,7 @@ from agentcurl.backends.base import CrawlBackend, CrawlMixin  # noqa: E402
 from agentcurl.backends.router import RouterBackend  # noqa: E402
 from agentcurl.backends.static import StaticBackend  # noqa: E402
 from agentcurl.extract import Extractor, parse_target  # noqa: E402
-from agentcurl.fetch_utils import extract_links  # noqa: E402
+from agentcurl.fetch_utils import decode_html, extract_links  # noqa: E402
 from agentcurl.llm import DeepSeekLLM  # noqa: E402
 
 FIXTURES = os.path.join(os.path.dirname(__file__), "fixtures")
@@ -74,6 +74,29 @@ def test_extract_links_absolute_same_site_and_dedup():
     assert all(not link.startswith("mailto") for link in links)  # non-http dropped
     assert len(links) == len(set(links)), "fragments should collapse to one URL"
     print("ok  extract_links: absolute, same-site, deduped, http-only")
+
+
+# -- charset detection (pure, no network) -------------------------------------
+def test_decode_html_sniffs_meta_charset():
+    """A GBK page with no HTTP charset header must decode via its <meta charset>,
+    not silently mojibake as UTF-8 (regression: legacy Chinese sites like
+    xywy.com)."""
+    import httpx
+
+    title = "寻医问药网"
+    html = f'<html><head><meta charset="gbk"><title>{title}</title></head></html>'
+    raw = html.encode("gbk")
+    # no charset in Content-Type -> httpx would assume utf-8 and corrupt it
+    resp = httpx.Response(200, content=raw, headers={"content-type": "text/html"})
+    assert resp.charset_encoding is None
+    assert title in decode_html(resp), "meta charset not honored"
+    # header charset still wins when present
+    resp2 = httpx.Response(
+        200, content="café".encode("utf-8"),
+        headers={"content-type": "text/html; charset=utf-8"},
+    )
+    assert decode_html(resp2) == "café"
+    print("ok  decode_html: sniffs <meta charset>, respects header charset")
 
 
 # -- static backend over loopback (real fetch) --------------------------------
