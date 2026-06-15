@@ -30,12 +30,22 @@ class BrowserBackend(CrawlMixin):
         self.config = config
 
     def fetch(self, url: str, **opts) -> Document:
+        import os
+
         from playwright.sync_api import sync_playwright
+
+        # a learned recipe may carry a captured login session (cookies+localStorage)
+        storage_state = opts.get("storage_state")
+        if storage_state and not os.path.exists(storage_state):
+            storage_state = None  # stale path -> fetch anonymously rather than crash
 
         with sync_playwright() as p:
             browser = p.chromium.launch(headless=self.config.browser_headless)
             try:
-                page = browser.new_page(user_agent=self.config.user_agent)
+                context = browser.new_context(
+                    user_agent=self.config.user_agent, storage_state=storage_state
+                )
+                page = context.new_page()
                 response = page.goto(
                     url,
                     wait_until=self.config.browser_wait_until,

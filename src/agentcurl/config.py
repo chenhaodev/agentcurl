@@ -56,6 +56,10 @@ class Config:
     jina_api_key: str = ""  # optional: higher rate limits
     jina_base_url: str = "https://r.jina.ai"
 
+    # --- meta-learning layer (per-domain recipes) ---
+    learn: bool = True  # record per-domain outcomes + auto-apply learned recipes
+    recipes_dir: str = ".agentcurl/recipes"  # where learned recipes are stored
+
     @classmethod
     def from_env(cls) -> "Config":
         def _flag(name: str, default: str = "") -> bool:
@@ -86,4 +90,6 @@ class Config:
             firecrawl_base_url=os.getenv("FIRECRAWL_API_BASE", "https://api.firecrawl.dev"),
             jina_api_key=os.getenv("JINA_API_KEY", ""),
             jina_base_url=os.getenv("JINA_API_BASE", "https://r.jina.ai"),
+            learn=_flag("AGENTCURL_LEARN", "1"),
+            recipes_dir=os.getenv("AGENTCURL_RECIPES_DIR", ".agentcurl/recipes"),
         )

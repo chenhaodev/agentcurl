@@ -43,7 +43,14 @@ class StaticBackend(CrawlMixin):
             pass
 
     def fetch(self, url: str, **opts) -> Document:
-        resp = http_get(url, self.config, client=self.client)
+        # a learned recipe may supply session cookies / auth headers (see recipes.py)
+        headers = dict(opts.get("headers") or {})
+        cookies = opts.get("cookies") or {}
+        if cookies:
+            headers["Cookie"] = "; ".join(f"{k}={v}" for k, v in cookies.items())
+        resp = http_get(
+            url, self.config, client=self.client, extra_headers=headers or None
+        )
         html = decode_html(resp)  # charset-aware (handles GBK/legacy-encoded sites)
         markdown, title, meta = self._extract(html, url)
         return Document(

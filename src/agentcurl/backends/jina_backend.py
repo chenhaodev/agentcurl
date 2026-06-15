@@ -31,6 +31,11 @@ class JinaBackend(CrawlMixin):
         }
         if self.config.jina_api_key:
             headers["Authorization"] = f"Bearer {self.config.jina_api_key}"
+        # a learned recipe can forward the target site's cookies to the reader
+        headers.update(opts.get("headers") or {})
+        cookies = opts.get("cookies") or {}
+        if cookies:
+            headers["X-Set-Cookie"] = "; ".join(f"{k}={v}" for k, v in cookies.items())
 
         reader_url = f"{self.config.jina_base_url.rstrip('/')}/{url}"
         resp = http_get(reader_url, self.config, extra_headers=headers)

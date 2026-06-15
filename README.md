@@ -106,6 +106,7 @@ CrawlManager (facade)                                     manager.py
  │    ├─ jina       r.jina.ai reader (zero-install remote URL → md)
  │    └─ router     fallback chain / fan-out across the above (a+b)
  ├─ Extractor     DeepSeek-V4-Flash: page → schema/NL prompt → JSON   extract.py
+ ├─ RecipeStore   meta layer: learns best backend + login session per domain   recipes.py
  └─ DeepSeekLLM   one OpenAI-compatible client, injected into the Extractor   llm.py
 ```
 
@@ -147,6 +148,39 @@ DeepSeek to return JSON. `target` is either:
 
 With no `DEEPSEEK_API_KEY` (or any LLM/parse error) it returns the raw markdown
 with `ExtractResult.raw == True`, so the pipeline never crashes offline.
+
+## Meta-learning: learn a site once, get it right next time
+
+agentcurl shouldn't make you re-solve a site every visit. The **meta layer**
+(on by default; `AGENTCURL_LEARN=0` to disable) keeps a small per-domain
+*recipe* it learns and replays automatically:
+
+- **Learn from outcomes (zero effort).** Every fetch records which backend
+  actually returned content for that domain. With `CRAWL_BACKEND=auto`, the next
+  crawl of that domain is routed to the backend that has worked best there —
+  `static` until something better is learned, then e.g. `jina` for a JS site.
+- **Learn a login (watch once).** For pages behind a login, capture the session
+  one time in a real browser:
+
+  ```bash
+  python -m agentcurl https://example.com/dashboard --learn-login
+  # a browser opens — log in, then press Enter; the session is saved
+  ```
+
+  This stores the Playwright `storage_state` (cookies + localStorage) and a
+  cookie set in the domain's recipe. **Every later crawl of that domain replays
+  it** — the `browser` backend reloads the session, and `static`/`jina` send the
+  saved cookies — so authenticated pages just work, no code change.
+
+Recipes are plain JSON under `AGENTCURL_RECIPES_DIR` (default `.agentcurl/`,
+git-ignored). A `Recipe` carries `best_backend`, `cookies`, `storage_state`,
+extra `headers`, and per-backend success tallies. Programmatic API:
+
+```python
+with CrawlManager() as cm:        # CRAWL_BACKEND=auto
+    cm.learn_login("https://site.com/login")   # one-time, interactive
+    doc = cm.fetch("https://site.com/private")  # authenticated, best backend, automatic
+```
 
 ## Install
 
@@ -257,8 +291,10 @@ from any directory.
 | `DEEPSEEK_API_KEY` | — | DeepSeek key (OpenAI-compatible); empty → extraction falls back to raw markdown |
 | `DEEPSEEK_MODEL` | `deepseek-v4-flash` | model id |
 | `DEEPSEEK_API_BASE` | `https://api.deepseek.com` | base url |
-| `CRAWL_BACKEND` | `static` | `static` \| `browser` \| `crawl4ai` \| `firecrawl` \| `jina` \| a `+`-list e.g. `static+jina` |
+| `CRAWL_BACKEND` | `static` | `static` \| `browser` \| `crawl4ai` \| `firecrawl` \| `jina` \| `auto` (learned per domain) \| a `+`-list e.g. `static+jina` |
 | `ROUTER_MODE` | `fallback` | for a `+`-list: `fallback` (first non-empty) \| `fan-out` (richest) |
+| `AGENTCURL_LEARN` | `1` | record per-domain outcomes + auto-apply learned recipes (`0` to disable) |
+| `AGENTCURL_RECIPES_DIR` | `.agentcurl/recipes` | where learned recipes + login sessions are stored |
 | `CRAWL_DEPTH` | `1` | link-following depth for `crawl()` |
 | `CRAWL_MAX_PAGES` | `20` | hard cap on pages per `crawl()` |
 | `REQUEST_TIMEOUT` | `30` | per-request HTTP timeout (seconds) |
@@ -297,10 +333,12 @@ distributed/queue-based large crawls (Scrapy/Crawlee) — use **crawl4ai** or
 
 ```
 src/agentcurl/
-  manager.py            CrawlManager facade: fetch / crawl / extract + lifecycle
+  manager.py            CrawlManager facade: fetch / crawl / extract + meta layer
   extract.py            DeepSeek schema/NL → JSON (+ offline raw fallback)
+  recipes.py            per-domain learned recipes (best backend, session, stats)
+  login.py              watch-user-login-once capture (headed Playwright)
   llm.py                DeepSeek-V4-Flash OpenAI-compatible client
-  fetch_utils.py        pooled GET, robots.txt gate, link extraction, rate limit
+  fetch_utils.py        pooled GET, charset decode, robots gate, links, rate limit
   config.py             env-driven config
   types.py              Document, ExtractResult
   mcp.py                MCP server (agentcurl_fetch / _crawl / _extract)

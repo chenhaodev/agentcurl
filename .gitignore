@@ -6,4 +6,5 @@ build/
 dist/
 .env
 .data/
+.agentcurl/          # learned per-domain recipes + captured login sessions
 .claude/hooks/.logs/

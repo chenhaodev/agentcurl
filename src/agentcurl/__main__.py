@@ -29,9 +29,22 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--depth", type=int, default=None, help="crawl link-following depth")
     parser.add_argument("--max-pages", type=int, default=None, help="crawl page cap")
     parser.add_argument("--json", action="store_true", help="emit JSON instead of pretty text")
+    parser.add_argument(
+        "--learn-login",
+        action="store_true",
+        help="open a browser to log in once; save the session for future crawls",
+    )
     args = parser.parse_args(argv)
 
     with CrawlManager() as cm:
+        if args.learn_login:
+            recipe = cm.learn_login(args.url)
+            print(f"# saved login recipe for {recipe.domain}")
+            print(f"  storage_state: {recipe.storage_state}")
+            print(f"  cookies: {len(recipe.cookies)} saved · best_backend: {recipe.best_backend}")
+            print(f"  next crawl of {recipe.domain} will reuse this session.")
+            return 0
+
         if args.extract or args.schema:
             target = parse_target(args.schema) if args.schema else args.extract
             res = cm.extract(args.url, target)

@@ -37,14 +37,24 @@ def _build_single(name: str, config: Config) -> CrawlBackend:
     )
 
 
+def build_named(name: str, config: Config) -> CrawlBackend:
+    """Build one backend by name (public alias of the single-backend factory),
+    used by CrawlManager's per-domain `auto` selection."""
+    return _build_single(name, config)
+
+
 def build_backend(config: Config) -> CrawlBackend:
     """Select the crawl backend(s) from CRAWL_BACKEND.
 
     A single name (e.g. "crawl4ai") builds that backend directly. A "+"/"," list
     (e.g. "static+browser") builds each and wraps them in a RouterBackend that
-    tries them as a fallback chain (or fans out), per ROUTER_MODE.
+    tries them as a fallback chain (or fans out), per ROUTER_MODE. The special
+    value "auto" defers per-domain backend choice to CrawlManager (which uses
+    learned recipes), defaulting to static until something better is learned.
     """
     spec = config.crawl_backend.lower()
+    if spec == "auto":
+        return _build_single("static", config)  # sensible default; manager may swap per domain
     names = [p.strip() for p in re.split(r"[+,]", spec) if p.strip()]
     if not names:
         raise ValueError("CRAWL_BACKEND is empty; set it to e.g. 'static'.")
@@ -57,4 +67,4 @@ def build_backend(config: Config) -> CrawlBackend:
     return RouterBackend(children, mode=config.router_mode)
 
 
-__all__ = ["CrawlBackend", "build_backend"]
+__all__ = ["CrawlBackend", "build_backend", "build_named"]

@@ -84,6 +84,14 @@ def build_client(config: Config) -> httpx.Client:
     )
 
 
+def domain_of(url: str) -> str:
+    """Host[:port] of a URL — the key under which learned recipes are stored."""
+    try:
+        return urlparse(url).netloc
+    except Exception:
+        return ""
+
+
 def same_domain(url: str, base: str) -> bool:
     """True when `url` has the exact same host (and port) as `base`, ignoring
     scheme. Intentionally strict: `www.example.com` is treated as a different

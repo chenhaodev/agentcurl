@@ -14,6 +14,7 @@ import functools
 import http.server
 import os
 import sys
+import tempfile
 import threading
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "src"))
@@ -26,6 +27,7 @@ from agentcurl.backends.static import StaticBackend  # noqa: E402
 from agentcurl.extract import Extractor, parse_target  # noqa: E402
 from agentcurl.fetch_utils import decode_html, extract_links  # noqa: E402
 from agentcurl.llm import DeepSeekLLM  # noqa: E402
+from agentcurl.recipes import Recipe, RecipeStore  # noqa: E402
 
 FIXTURES = os.path.join(os.path.dirname(__file__), "fixtures")
 
@@ -36,6 +38,7 @@ def _cfg(**kw) -> Config:
         deepseek_api_key="",  # force the offline raw-markdown extraction path
         respect_robots=False,  # the loopback server has no robots.txt
         rate_limit_delay=0,
+        learn=False,  # keep tests hermetic; recipe tests opt in with a temp dir
     )
     base.update(kw)
     return Config(**base)
@@ -278,6 +281,72 @@ def test_manager_extract_from_document_offline():
     res = cm.extract(doc, "the greeting")
     assert res.raw and res.data == "hello world"
     print("ok  manager.extract accepts a Document and runs offline")
+
+
+# -- meta layer: recipe store + learning --------------------------------------
+def test_recipe_store_roundtrip_and_domain_keying():
+    with tempfile.TemporaryDirectory() as d:
+        store = RecipeStore(d)
+        assert store.get("example.com") is None  # unlearned -> None
+        r = Recipe(domain="example.com", cookies={"sid": "abc"}, headers={"X-Auth": "t"})
+        store.save(r)
+        got = store.get("example.com")
+        assert got is not None and got.cookies == {"sid": "abc"} and got.headers == {"X-Auth": "t"}
+        # weird domain chars don't escape the dir / collide
+        store.save(Recipe(domain="host:8080/../x"))
+        assert store.get("host:8080/../x") is not None
+    print("ok  recipe store: save/load roundtrip + safe domain keying")
+
+
+def test_record_outcome_learns_best_backend():
+    with tempfile.TemporaryDirectory() as d:
+        store = RecipeStore(d)
+        # static keeps failing here, jina keeps working -> jina becomes best
+        store.record_outcome("site.test", "static", ok=False)
+        store.record_outcome("site.test", "static", ok=False)
+        store.record_outcome("site.test", "jina", ok=True)
+        r = store.record_outcome("site.test", "jina", ok=True)
+        assert r.best_backend == "jina", r.best_backend
+        assert r.successes["jina"] == 2 and r.attempts["static"] == 2
+        # a backend that never succeeds is never chosen as best
+        store2 = RecipeStore(d)
+        only_fail = store2.record_outcome("fail.test", "static", ok=False)
+        assert only_fail.best_backend is None
+    print("ok  record_outcome: learns the best-performing backend per domain")
+
+
+def test_manager_replays_recipe_cookies():
+    """A learned recipe's cookies must be sent on the next fetch (the core of
+    'log in once, reuse the session next time') — verified over loopback."""
+    class _CookieEcho(http.server.BaseHTTPRequestHandler):
+        def log_message(self, *a):
+            pass
+
+        def do_GET(self):
+            body = f"<html><body>cookie={self.headers.get('Cookie', '')}</body></html>"
+            self.send_response(200)
+            self.send_header("Content-Type", "text/html; charset=utf-8")
+            self.end_headers()
+            self.wfile.write(body.encode())
+
+    httpd = http.server.ThreadingHTTPServer(("127.0.0.1", 0), _CookieEcho)
+    threading.Thread(target=httpd.serve_forever, daemon=True).start()
+    try:
+        port = httpd.server_address[1]
+        domain = f"127.0.0.1:{port}"
+        with tempfile.TemporaryDirectory() as d:
+            store = RecipeStore(d)
+            store.save(Recipe(domain=domain, cookies={"session": "xyz123"}))
+            cfg = _cfg(learn=True, recipes_dir=d)
+            with CrawlManager(cfg) as cm:
+                doc = cm.fetch(f"http://{domain}/")
+            assert "session=xyz123" in doc.html, doc.html
+            # outcome got recorded for this domain
+            assert store.get(domain).attempts.get("static", 0) >= 1
+    finally:
+        httpd.shutdown()
+        httpd.server_close()
+    print("ok  manager replays learned cookies + records the outcome")
 
 
 def main():
