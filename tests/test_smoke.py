@@ -295,7 +295,12 @@ def test_recipe_store_roundtrip_and_domain_keying():
         # weird domain chars don't escape the dir / collide
         store.save(Recipe(domain="host:8080/../x"))
         assert store.get("host:8080/../x") is not None
-    print("ok  recipe store: save/load roundtrip + safe domain keying")
+        # recipes hold session cookies -> owner-only file + dir perms
+        import stat
+        mode = stat.S_IMODE(os.stat(store._path("example.com")).st_mode)
+        assert mode == 0o600, oct(mode)
+        assert stat.S_IMODE(os.stat(d).st_mode) == 0o700, oct(os.stat(d).st_mode)
+    print("ok  recipe store: roundtrip, safe domain keying, owner-only perms")
 
 
 def test_record_outcome_learns_best_backend():

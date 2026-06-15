@@ -93,12 +93,18 @@ class RecipeStore:
             return None  # unreadable -> treat as unlearned
 
     def save(self, recipe: Recipe) -> None:
-        os.makedirs(self.base_dir, exist_ok=True)
+        # recipes can hold session cookies, so keep the dir + files owner-only.
+        os.makedirs(self.base_dir, mode=0o700, exist_ok=True)
+        try:
+            os.chmod(self.base_dir, 0o700)  # tighten even if it pre-existed
+        except OSError:
+            pass
         path = self._path(recipe.domain)
         tmp = f"{path}.tmp"
-        with open(tmp, "w") as f:
+        fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+        with os.fdopen(fd, "w") as f:
             json.dump(recipe.to_dict(), f, indent=2, ensure_ascii=False)
-        os.replace(tmp, path)  # atomic
+        os.replace(tmp, path)  # atomic; preserves the 0o600 mode
 
     def record_outcome(self, domain: str, backend: str, ok: bool) -> Recipe:
         """Update (or create) a domain's recipe with one crawl outcome."""

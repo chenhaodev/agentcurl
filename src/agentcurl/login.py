@@ -19,7 +19,7 @@ import os
 
 from .config import Config
 from .fetch_utils import domain_of
-from .recipes import Recipe, RecipeStore
+from .recipes import Recipe, RecipeStore, _safe_name
 
 
 def record_login(
@@ -43,8 +43,13 @@ def record_login(
         ) from e
 
     domain = domain_of(url)
-    os.makedirs(config.recipes_dir, exist_ok=True)
-    state_path = os.path.join(config.recipes_dir, f"{domain}.state.json")
+    # owner-only dir; sanitize the domain so a pathological URL can't escape it
+    os.makedirs(config.recipes_dir, mode=0o700, exist_ok=True)
+    try:
+        os.chmod(config.recipes_dir, 0o700)
+    except OSError:
+        pass
+    state_path = os.path.join(config.recipes_dir, f"{_safe_name(domain)}.state.json")
 
     with sync_playwright() as p:
         # headed on purpose — the user needs to see and drive the page
@@ -59,6 +64,10 @@ def record_login(
                 "then press Enter here to save the session... "
             )
             context.storage_state(path=state_path)  # cookies + localStorage to disk
+            try:
+                os.chmod(state_path, 0o600)  # it holds a live session — lock it down
+            except OSError:
+                pass
             cookies = {
                 c["name"]: c["value"]
                 for c in context.cookies()
