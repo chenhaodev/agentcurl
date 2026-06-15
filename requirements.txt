@@ -1,0 +1,13 @@
+# Core (required) — the zero-dep static backend + extraction run on just these.
+httpx>=0.27.0           # HTTP client (static / jina / firecrawl backends)
+trafilatura>=1.8.0      # HTML -> clean markdown (static backend, ms/page, CPU)
+openai>=1.40.0          # OpenAI-compatible client for DeepSeek-V4-Flash extraction
+python-dotenv>=1.0.0    # load .env
+
+# Optional — install only the backend you switch to:
+#   browser (JS/dynamic pages):
+#     pip install "agentcurl[browser]" && playwright install chromium
+#   crawl4ai (LLM-native fit-markdown + deep crawl):
+#     pip install "agentcurl[crawl4ai]" && crawl4ai-setup
+#   firecrawl (managed REST API): no install — just set FIRECRAWL_API_KEY
+#   jina (r.jina.ai remote reader): no install — set JINA_API_KEY for higher limits

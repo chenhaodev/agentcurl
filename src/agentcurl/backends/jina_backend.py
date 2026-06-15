@@ -1,0 +1,65 @@
+"""Jina backend — r.jina.ai reader. Zero-install remote URL -> markdown.
+
+Prepends the target URL to https://r.jina.ai/ and gets clean, LLM-ready markdown
+back. No browser, no API key required (a JINA_API_KEY raises rate limits). The
+remote service handles JS rendering, so it's a good zero-dependency fallback for
+dynamic pages when you can't install Playwright. Only implements `fetch`; the
+CrawlMixin walks links for `crawl` (links come from the markdown via httpx on the
+real page when needed, but jina returns markdown without a link list, so crawl
+on jina is shallow by nature).
+"""
+
+from __future__ import annotations
+
+import httpx
+
+from .base import CrawlMixin
+from ..config import Config
+from ..types import Document
+
+
+class JinaBackend(CrawlMixin):
+    name = "jina"
+
+    def __init__(self, config: Config):
+        self.config = config
+
+    def fetch(self, url: str, **opts) -> Document:
+        headers = {
+            "User-Agent": self.config.user_agent,
+            "Accept": "text/markdown",
+            # ask the reader for structured extras in response headers/body
+            "X-With-Links-Summary": "true",
+        }
+        if self.config.jina_api_key:
+            headers["Authorization"] = f"Bearer {self.config.jina_api_key}"
+
+        reader_url = f"{self.config.jina_base_url.rstrip('/')}/{url}"
+        resp = httpx.get(
+            reader_url,
+            headers=headers,
+            timeout=self.config.request_timeout,
+            follow_redirects=True,
+        )
+        markdown = resp.text
+        title = _first_heading(markdown)
+        return Document(
+            url=url,
+            status=resp.status_code,
+            markdown=markdown,
+            html="",  # reader returns markdown only
+            title=title,
+            links=[],  # link-summary parsing left to crawl4ai/firecrawl tiers
+            metadata={"backend": self.name, "reader_url": reader_url},
+        )
+
+
+def _first_heading(markdown: str) -> str:
+    """Title = first markdown '# ' heading (the reader puts 'Title:' there)."""
+    for line in markdown.splitlines():
+        line = line.strip()
+        if line.startswith("Title:"):
+            return line[len("Title:"):].strip()
+        if line.startswith("# "):
+            return line[2:].strip()
+    return ""

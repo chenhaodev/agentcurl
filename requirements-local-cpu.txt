@@ -1,0 +1,23 @@
+# CPU-only set verified on macbook-m3 (arm64) and ubuntu cloud. Both local
+# backends (browser, crawl4ai) run headless on CPU — no GPU anywhere.
+#
+# Core (always):
+httpx>=0.27.0
+trafilatura>=1.8.0
+openai>=1.40.0
+python-dotenv>=1.0.0
+#
+# Browser backend (one-time browser download after install):
+#   pip install playwright>=1.40
+#   playwright install chromium
+#     - m3 (arm64): pulls the arm64 Chromium build automatically.
+#     - ubuntu headless: also run `playwright install-deps chromium` (or
+#       `sudo apt-get install` the libnss3/libatk/… set) for the system libs.
+#
+# crawl4ai backend (drives its own browser; CPU-only):
+#   pip install crawl4ai>=0.4
+#   crawl4ai-setup        # downloads the browser + runs a health check
+#
+# NOTE: if your Python's TLS trust store is missing (older macOS), install with
+#   pip install --trusted-host pypi.org --trusted-host files.pythonhosted.org -r requirements-local-cpu.txt
+# and at runtime: export SSL_CERT_FILE=$(python3 -c "import certifi; print(certifi.where())")

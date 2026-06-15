@@ -1,0 +1,49 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "agentcurl"
+version = "0.1.0"
+description = "Switchable web-crawler middleware: one interface over pluggable backends (static/trafilatura, Playwright, crawl4ai, Firecrawl, jina) with DeepSeek-V4-Flash structured extraction."
+readme = "README.md"
+requires-python = ">=3.10"
+license = { text = "MIT" }
+keywords = ["crawler", "scraper", "web", "llm", "trafilatura", "playwright", "crawl4ai", "firecrawl", "deepseek"]
+authors = [{ name = "chenhao", email = "chenhaomails@gmail.com" }]
+classifiers = [
+  "Programming Language :: Python :: 3",
+  "License :: OSI Approved :: MIT License",
+  "Intended Audience :: Developers",
+  "Topic :: Internet :: WWW/HTTP :: Indexing/Search",
+]
+dependencies = [
+  "httpx>=0.27.0",          # HTTP client for static/jina/firecrawl
+  "trafilatura>=1.8.0",     # zero-dep markdown extraction (static backend)
+  "openai>=1.40.0",         # DeepSeek via the OpenAI-compatible client
+  "python-dotenv>=1.0.0",
+]
+
+[project.optional-dependencies]
+# install only the backend(s) you switch to
+browser = ["playwright>=1.40"]                      # also needs: playwright install chromium
+crawl4ai = ["crawl4ai>=0.4"]                        # also needs: crawl4ai-setup
+firecrawl = []                                       # uses httpx REST directly; only a key needed
+all = ["playwright>=1.40", "crawl4ai>=0.4"]
+dev = ["pytest>=7.0"]
+
+[project.urls]
+Homepage = "https://github.com/chenhaodev/agentcurl"
+Repository = "https://github.com/chenhaodev/agentcurl"
+Issues = "https://github.com/chenhaodev/agentcurl/issues"
+
+[project.scripts]
+agentcurl = "agentcurl.__main__:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+# live tests self-skip unless RUN_LIVE=1, so a plain `pytest` run stays offline
+addopts = "-q"
