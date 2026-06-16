@@ -6,6 +6,11 @@ native breadth-first deep crawl. We drive its async API on one persistent event
 loop so this adapter still satisfies the synchronous CrawlBackend Protocol, and
 we OVERRIDE `crawl` to use its real deep-crawl instead of the link-walk mixin.
 
+One `AsyncWebCrawler` (and the browser it manages) is started lazily and reused
+across every `fetch`/`crawl`, then torn down in `close()` — a fresh per-call
+crawler paid a browser launch each page. The shared loop is single-threaded, so
+the link-walk fallback runs serially (`concurrent_fetch = False`).
+
 Requires: pip install "crawl4ai" && crawl4ai-setup   (installs a browser once)
 """
 
@@ -20,6 +25,7 @@ from ..types import Document
 
 class Crawl4AIBackend(CrawlMixin):
     name = "crawl4ai"
+    concurrent_fetch = False  # one shared crawler on one event loop
 
     def __init__(self, config: Config):
         try:
@@ -31,12 +37,29 @@ class Crawl4AIBackend(CrawlMixin):
             ) from e
         self.config = config
         self._loop = asyncio.new_event_loop()
+        self._crawler = None  # started AsyncWebCrawler, reused across calls
 
     def _run(self, coro):
         return self._loop.run_until_complete(coro)
 
+    def _crawler_instance(self):
+        """Start the crawler (and its browser) once and reuse it."""
+        if self._crawler is None:
+            from crawl4ai import AsyncWebCrawler
+
+            self._crawler = AsyncWebCrawler()
+            self._run(self._crawler.start())
+        return self._crawler
+
     def close(self) -> None:
-        """Close the persistent event loop. Safe to call more than once."""
+        """Tear down the reused crawler then close the loop. Safe to call twice."""
+        if self._crawler is not None:
+            if not self._loop.is_closed():
+                try:
+                    self._run(self._crawler.close())
+                except Exception:
+                    pass
+            self._crawler = None  # drop the reference even if the loop is gone
         if self._loop is not None and not self._loop.is_closed():
             self._loop.close()
 
@@ -72,19 +95,14 @@ class Crawl4AIBackend(CrawlMixin):
         )
 
     def fetch(self, url: str, **opts) -> Document:
-        from crawl4ai import AsyncWebCrawler
-
-        async def _go():
-            async with AsyncWebCrawler() as crawler:
-                return await crawler.arun(url=url)
-
-        return self._to_document(self._run(_go()))
+        crawler = self._crawler_instance()
+        return self._to_document(self._run(crawler.arun(url=url)))
 
     def crawl(
         self, url: str, *, depth: int = 1, max_pages: int = 20, **opts
     ) -> list[Document]:
         """Native deep crawl via crawl4ai's BFSDeepCrawlStrategy."""
-        from crawl4ai import AsyncWebCrawler, CrawlerRunConfig
+        from crawl4ai import CrawlerRunConfig
         from crawl4ai.deep_crawling import BFSDeepCrawlStrategy
 
         strategy = BFSDeepCrawlStrategy(
@@ -92,11 +110,8 @@ class Crawl4AIBackend(CrawlMixin):
         )
         run_config = CrawlerRunConfig(deep_crawl_strategy=strategy, stream=False)
 
-        async def _go():
-            async with AsyncWebCrawler() as crawler:
-                return await crawler.arun(url=url, config=run_config)
-
-        results = self._run(_go())
+        crawler = self._crawler_instance()
+        results = self._run(crawler.arun(url=url, config=run_config))
         if not isinstance(results, list):
             results = [results]
         return [self._to_document(r) for r in results][:max_pages]
