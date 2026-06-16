@@ -41,8 +41,12 @@ class CrawlManager:
         self.backend: CrawlBackend = build_backend(self.config)
         self.extractor = Extractor(self.llm)
         self._auto = self.config.crawl_backend.lower() == "auto"
+        # autosave off: a crawl records an outcome per page, so debounce the
+        # writes and flush once on close() instead of re-dumping the file 20x.
         self.recipes: RecipeStore | None = (
-            RecipeStore(self.config.recipes_dir) if self.config.learn else None
+            RecipeStore(self.config.recipes_dir, autosave=False)
+            if self.config.learn
+            else None
         )
         # per-domain backend cache for auto mode (avoid rebuilding each fetch)
         self._auto_cache: dict[str, CrawlBackend] = {}
@@ -140,8 +144,11 @@ class CrawlManager:
 
     # -- lifecycle ------------------------------------------------------------
     def close(self) -> None:
-        """Release backend resources (pooled connections, event loops). Safe to
-        call multiple times; also runs on context-manager exit."""
+        """Release backend resources (pooled connections, event loops) and flush
+        any debounced recipe learning to disk. Safe to call multiple times; also
+        runs on context-manager exit."""
+        if self.recipes is not None:
+            self.recipes.flush()
         backends = [self.backend, *self._auto_cache.values()]
         for backend in backends:
             closer = getattr(backend, "close", None)

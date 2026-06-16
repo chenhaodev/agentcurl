@@ -354,6 +354,148 @@ def test_manager_replays_recipe_cookies():
     print("ok  manager replays learned cookies + records the outcome")
 
 
+# -- #3 concurrent crawl ------------------------------------------------------
+def test_mixin_crawl_fetches_a_level_concurrently():
+    """Pages in one BFS level are fetched in parallel. A barrier the size of the
+    level only releases if every child fetch is in flight together — so it stays
+    intact under concurrency and breaks (times out) under a serial walk."""
+    n = 4
+    barrier = threading.Barrier(n, timeout=3)
+
+    class _Concurrent(CrawlMixin):
+        name = "conc"
+
+        def __init__(self, cfg):
+            self.config = cfg
+
+        def fetch(self, url, **opts):
+            if url.endswith("/root"):
+                return Document(
+                    url=url, markdown="root",
+                    links=[f"http://conc.test/{i}" for i in range(n)],
+                )
+            try:
+                barrier.wait()
+            except threading.BrokenBarrierError:
+                pass
+            return Document(url=url, markdown="child")
+
+    docs = _Concurrent(_cfg(crawl_concurrency=n)).crawl(
+        "http://conc.test/root", depth=1, max_pages=10
+    )
+    assert len(docs) == n + 1, docs
+    assert not barrier.broken, "children were not fetched concurrently"
+    print(f"ok  mixin crawl: fetched a level of {n} pages concurrently")
+
+
+def test_concurrent_fetch_flag_forces_serial_walk():
+    """A backend that opts out (concurrent_fetch=False) is walked serially even
+    with concurrency configured — the 2-party barrier can never fill, so breaks."""
+    barrier = threading.Barrier(2, timeout=0.3)
+
+    class _Serial(CrawlMixin):
+        name = "serial"
+        concurrent_fetch = False
+
+        def __init__(self, cfg):
+            self.config = cfg
+
+        def fetch(self, url, **opts):
+            if url.endswith("/root"):
+                return Document(url=url, links=["http://ser.test/a", "http://ser.test/b"])
+            try:
+                barrier.wait()
+            except threading.BrokenBarrierError:
+                pass
+            return Document(url=url, markdown="x")
+
+    docs = _Serial(_cfg(crawl_concurrency=8)).crawl("http://ser.test/root", depth=1)
+    assert len(docs) == 3, docs
+    assert barrier.broken, "concurrent_fetch=False did not force a serial walk"
+    print("ok  concurrent_fetch=False forces a serial crawl")
+
+
+# -- #2 recipe read-cache + write debounce ------------------------------------
+def test_recipe_store_memoizes_reads():
+    with tempfile.TemporaryDirectory() as d:
+        store = RecipeStore(d)
+        store.save(Recipe(domain="ex.com", cookies={"a": "1"}))
+        first = store.get("ex.com")  # primes the cache
+        os.remove(store._path("ex.com"))  # disk gone -> only a cache hit can serve
+        assert store.get("ex.com") is first, "read not memoized"
+    print("ok  recipe store memoizes disk reads (same object, no re-read)")
+
+
+def test_recipe_store_debounces_writes_until_flush():
+    with tempfile.TemporaryDirectory() as d:
+        store = RecipeStore(d, autosave=False)
+        store.record_outcome("x.test", "static", ok=True)
+        assert not os.path.exists(store._path("x.test")), "wrote before flush"
+        store.flush()
+        assert os.path.exists(store._path("x.test")), "flush did not persist"
+        reread = RecipeStore(d).get("x.test")
+        assert reread is not None and reread.successes.get("static") == 1
+    print("ok  recipe store debounces writes, flush() persists them")
+
+
+# -- #4 extraction result cache -----------------------------------------------
+class _CountingLLM(DeepSeekLLM):
+    """A fake LLM that always reports available and counts its chat() calls."""
+
+    def __init__(self, cfg):
+        super().__init__(cfg)
+        self.calls = 0
+
+    @property
+    def available(self) -> bool:
+        return True
+
+    def chat(self, messages, **kwargs) -> str:
+        self.calls += 1
+        return '{"title": "T"}'
+
+
+def test_extractor_caches_identical_extractions():
+    llm = _CountingLLM(_cfg())
+    ext = Extractor(llm)
+    r1 = ext.extract(Document(url="http://x.test/1", markdown="same body"), {"title": "str"})
+    # different URL, identical content + schema -> served from cache, no 2nd call
+    r2 = ext.extract(Document(url="http://x.test/2", markdown="same body"), {"title": "str"})
+    assert llm.calls == 1, f"identical extraction re-called the LLM ({llm.calls}x)"
+    assert r1.data == {"title": "T"} and r2.metadata.get("cached") is True
+    # a different target is a cache miss -> re-calls
+    ext.extract(Document(url="http://x.test/1", markdown="same body"), "another prompt")
+    assert llm.calls == 2
+    # cache=False disables it entirely
+    llm2 = _CountingLLM(_cfg())
+    ext2 = Extractor(llm2, cache=False)
+    ext2.extract(Document(url="http://x.test", markdown="b"), {"t": "str"})
+    ext2.extract(Document(url="http://x.test", markdown="b"), {"t": "str"})
+    assert llm2.calls == 2, "cache=False still cached"
+    print("ok  extractor caches identical (content+target) extractions")
+
+
+# -- #5 backend registry / plugins --------------------------------------------
+def test_register_backend_extends_the_factory():
+    from agentcurl.backends import build_backend as _bb, register_backend
+
+    class _Plugin(CrawlMixin):
+        name = "myplugin"
+
+        def __init__(self, cfg):
+            self.config = cfg
+
+        def fetch(self, url, **opts):
+            return Document(url=url, markdown="plugin!")
+
+    register_backend("myplugin", lambda cfg: _Plugin(cfg))
+    assert isinstance(_bb(_cfg(crawl_backend="myplugin")), _Plugin)
+    # and it composes inside a router chain like any built-in
+    router = _bb(_cfg(crawl_backend="static+myplugin"))
+    assert set(router.backends) == {"static", "myplugin"}, router.backends
+    print("ok  register_backend: a plugin backend builds + composes in a router")
+
+
 def main():
     tests = [v for k, v in sorted(globals().items()) if k.startswith("test_")]
     for t in tests:

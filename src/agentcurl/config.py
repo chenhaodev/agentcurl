@@ -35,6 +35,7 @@ class Config:
     # --- crawl limits (shared across backends) ---
     crawl_depth: int = 1  # link-following depth for crawl()
     crawl_max_pages: int = 20  # hard cap on pages fetched per crawl()
+    crawl_concurrency: int = 8  # max pages fetched in parallel per depth level (1 = serial)
     request_timeout: int = 30  # per-request HTTP timeout (seconds)
     rate_limit_delay: float = 0.0  # seconds to sleep between same-domain fetches
     user_agent: str = "agentcurl/0.1 (+https://github.com/chenhaodev/agentcurl)"
@@ -75,6 +76,7 @@ class Config:
             router_mode=os.getenv("ROUTER_MODE", "fallback"),
             crawl_depth=int(os.getenv("CRAWL_DEPTH", "1")),
             crawl_max_pages=int(os.getenv("CRAWL_MAX_PAGES", "20")),
+            crawl_concurrency=int(os.getenv("CRAWL_CONCURRENCY", "8")),
             request_timeout=int(os.getenv("REQUEST_TIMEOUT", "30")),
             rate_limit_delay=float(os.getenv("RATE_LIMIT_DELAY", "0")),
             user_agent=os.getenv(

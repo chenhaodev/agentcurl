@@ -76,13 +76,22 @@ class RecipeStore:
     """JSON-file-per-domain recipe persistence. Missing/corrupt files read as
     "no recipe" so learning is always best-effort and never fatal."""
 
-    def __init__(self, base_dir: str):
+    def __init__(self, base_dir: str, *, autosave: bool = True):
         self.base_dir = base_dir
+        # Read-through cache: one JSON parse per domain instead of one per fetch
+        # (a 20-page same-domain crawl re-read the file 20 times before).
+        self._cache: dict[str, Recipe | None] = {}
+        # Write debounce: with autosave off, `record_outcome` only updates the
+        # cache and marks the domain dirty; `flush()` (called on manager close)
+        # writes them once. The default stays True so direct callers persist
+        # immediately, unchanged.
+        self.autosave = autosave
+        self._dirty: set[str] = set()
 
     def _path(self, domain: str) -> str:
         return os.path.join(self.base_dir, f"{_safe_name(domain)}.json")
 
-    def get(self, domain: str) -> Recipe | None:
+    def _read(self, domain: str) -> Recipe | None:
         path = self._path(domain)
         if not os.path.exists(path):
             return None
@@ -91,6 +100,21 @@ class RecipeStore:
                 return Recipe.from_dict(json.load(f))
         except Exception:
             return None  # unreadable -> treat as unlearned
+
+    def get(self, domain: str) -> Recipe | None:
+        """Return a domain's recipe, memoizing the disk read. The cached object
+        is the same one `record_outcome` mutates, so repeated fetches of one
+        domain neither re-parse the file nor lose in-flight updates.
+
+        Only learned recipes are cached — a miss is never memoized, so a recipe
+        saved later (here or by another store instance) is still picked up."""
+        cached = self._cache.get(domain)
+        if cached is not None:
+            return cached
+        recipe = self._read(domain)
+        if recipe is not None:
+            self._cache[domain] = recipe
+        return recipe
 
     def save(self, recipe: Recipe) -> None:
         # recipes can hold session cookies, so keep the dir + files owner-only.
@@ -105,10 +129,26 @@ class RecipeStore:
         with os.fdopen(fd, "w") as f:
             json.dump(recipe.to_dict(), f, indent=2, ensure_ascii=False)
         os.replace(tmp, path)  # atomic; preserves the 0o600 mode
+        self._dirty.discard(recipe.domain)
+
+    def flush(self) -> None:
+        """Persist every recipe changed since the last flush. Idempotent; called
+        on manager close so a debounced (autosave=False) store never loses
+        learning at the end of a session."""
+        for domain in list(self._dirty):
+            recipe = self._cache.get(domain)
+            if recipe is not None:
+                self.save(recipe)
+        self._dirty.clear()
 
     def record_outcome(self, domain: str, backend: str, ok: bool) -> Recipe:
-        """Update (or create) a domain's recipe with one crawl outcome."""
+        """Update (or create) a domain's recipe with one crawl outcome. Persists
+        immediately when `autosave`, otherwise defers the write to `flush()`."""
         recipe = self.get(domain) or Recipe(domain=domain)
         recipe.record(backend, ok)
-        self.save(recipe)
+        self._cache[domain] = recipe
+        if self.autosave:
+            self.save(recipe)
+        else:
+            self._dirty.add(domain)
         return recipe

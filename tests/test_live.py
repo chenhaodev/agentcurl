@@ -88,7 +88,7 @@ def test_browser_live():
         doc = cm.fetch("https://example.com")
     except Exception as e:
         if _missing_browser(e):
-            print(f"skip browser (not installed: run `playwright install chromium`)")
+            print("skip browser (not installed: run `playwright install chromium`)")
             return
         raise
     assert doc.status in (200, 0) and doc.markdown.strip(), doc
@@ -103,7 +103,7 @@ def test_crawl4ai_live():
         doc = cm.fetch("https://example.com")
     except Exception as e:
         if _missing_browser(e):
-            print(f"skip crawl4ai (not installed: run `pip install crawl4ai && crawl4ai-setup`)")
+            print("skip crawl4ai (not installed: run `pip install crawl4ai && crawl4ai-setup`)")
             return
         raise
     assert doc.markdown.strip(), "crawl4ai returned empty markdown"
